@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from .database import FILES_DIR, ROOT, db, hydrate_application, init_db, now_iso, rows
 from .integrations import EMAIL_PROVIDERS, OPPORTUNITY_ADAPTERS
+from .profile_extractor import extract_candidates, extract_text
 from .services import apply_email_outcome, demo_sync, prepare_application
 
 @asynccontextmanager
@@ -32,6 +33,13 @@ class FactInput(BaseModel):
     value: str
     verified: bool = False
     source: str = "manual"
+
+
+class CandidateReview(BaseModel):
+    accept: bool
+    section: str | None = None
+    label: str | None = None
+    value: str | None = None
 
 
 class ApplicationInput(BaseModel):
@@ -106,9 +114,63 @@ def save_fact(fact: FactInput) -> dict[str, Any]:
 @app.post("/api/profile/import")
 async def import_profile(file: UploadFile = File(...)) -> dict[str, Any]:
     FILES_DIR.mkdir(exist_ok=True)
-    target = FILES_DIR / Path(file.filename or "document").name
+    filename = Path(file.filename or "document").name
+    target = FILES_DIR / filename
     target.write_bytes(await file.read())
-    return {"filename": target.name, "status": "stored", "message": "Document stored locally. Confirm extracted facts before using them in forms."}
+    with db() as conn:
+        cursor = conn.execute(
+            "INSERT INTO profile_documents(filename, stored_path, media_type, extraction_status, created_at) VALUES (?, ?, ?, 'pending', ?)",
+            (filename, str(target), file.content_type, now_iso()),
+        )
+        document_id = cursor.lastrowid
+        try:
+            candidates = extract_candidates(extract_text(target))
+            conn.executemany(
+                """INSERT INTO profile_candidates(document_id, section, label, value, confidence, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                [(document_id, item.section, item.label, item.value, item.confidence, now_iso()) for item in candidates],
+            )
+            conn.execute("UPDATE profile_documents SET extraction_status = 'complete' WHERE id = ?", (document_id,))
+        except ValueError as exc:
+            conn.execute("UPDATE profile_documents SET extraction_status = 'unsupported' WHERE id = ?", (document_id,))
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"id": document_id, "filename": filename, "status": "complete", "candidates": len(candidates), "message": "Document stored locally. Review extracted facts before using them in forms."}
+
+
+@app.get("/api/profile/documents")
+def profile_documents() -> list[dict[str, Any]]:
+    with db() as conn:
+        return rows(conn.execute("""SELECT profile_documents.*, COUNT(profile_candidates.id) AS candidate_count
+                                   FROM profile_documents LEFT JOIN profile_candidates ON profile_candidates.document_id = profile_documents.id
+                                   GROUP BY profile_documents.id ORDER BY profile_documents.created_at DESC"""))
+
+
+@app.get("/api/profile/candidates")
+def profile_candidates(review_status: str = "pending") -> list[dict[str, Any]]:
+    with db() as conn:
+        return rows(conn.execute("""SELECT profile_candidates.*, profile_documents.filename
+                                   FROM profile_candidates JOIN profile_documents ON profile_documents.id = profile_candidates.document_id
+                                   WHERE profile_candidates.review_status = ? ORDER BY profile_candidates.confidence DESC, profile_candidates.id""", (review_status,)))
+
+
+@app.post("/api/profile/candidates/{candidate_id}/review")
+def review_profile_candidate(candidate_id: int, payload: CandidateReview) -> dict[str, Any]:
+    with db() as conn:
+        candidate = conn.execute("SELECT * FROM profile_candidates WHERE id = ?", (candidate_id,)).fetchone()
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Profile candidate not found")
+        if not payload.accept:
+            conn.execute("UPDATE profile_candidates SET review_status = 'dismissed' WHERE id = ?", (candidate_id,))
+            return {"status": "dismissed"}
+        section = payload.section or candidate["section"]
+        label = payload.label or candidate["label"]
+        value = payload.value or candidate["value"]
+        fact = conn.execute(
+            "INSERT INTO profile_facts(section, label, value, verified, source, updated_at) VALUES (?, ?, ?, 1, ?, ?)",
+            (section, label, value, f"document:{candidate['document_id']}", now_iso()),
+        )
+        conn.execute("UPDATE profile_candidates SET review_status = 'accepted' WHERE id = ?", (candidate_id,))
+        return {"status": "accepted", "fact_id": fact.lastrowid}
 
 
 @app.get("/api/opportunities")

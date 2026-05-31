@@ -51,6 +51,25 @@ CREATE TABLE IF NOT EXISTS profile_facts (
   source TEXT NOT NULL DEFAULT 'manual',
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS profile_documents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  filename TEXT NOT NULL,
+  stored_path TEXT NOT NULL,
+  media_type TEXT,
+  extraction_status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS profile_candidates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id INTEGER NOT NULL,
+  section TEXT NOT NULL,
+  label TEXT NOT NULL,
+  value TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  review_status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(document_id) REFERENCES profile_documents(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS opportunities (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,

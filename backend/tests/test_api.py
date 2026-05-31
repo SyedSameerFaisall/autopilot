@@ -126,3 +126,27 @@ def test_preparation_preview_blocks_unresolved_required_fields(tmp_path: Path, m
         blocked = client.post(f"/api/applications/{created['id']}/submit?approved=true")
         assert blocked.status_code == 409
         assert "required form fields" in blocked.json()["detail"]
+
+
+def test_autopilot_command_creates_and_prepares_application(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(database, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(database, "FILES_DIR", tmp_path / "documents")
+    monkeypatch.setattr(database, "SCREENSHOTS_DIR", tmp_path / "screenshots")
+    database.init_db()
+
+    class FakeWorker:
+        def inspect(self, _: str):
+            return [InspectedField("Email address", "email", "email", True)]
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(main_module, "PersistentBrowserWorker", FakeWorker)
+    with TestClient(app) as client:
+        response = client.post("/api/autopilot/prepare", json={"source_url": "https://forms.example.com/apply"})
+        assert response.status_code == 200
+        application_id = response.json()["application_id"]
+        detail = client.get(f"/api/applications/{application_id}").json()
+        assert detail["organization"] == "forms.example.com"
+        assert detail["workflow_status"] == "ready_for_review"

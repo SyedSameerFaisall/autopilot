@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -70,6 +71,12 @@ class SettingsUpdate(BaseModel):
 
 class PreparationFieldUpdate(BaseModel):
     mapped_value: str
+
+
+class AutopilotCommand(BaseModel):
+    source_url: str
+    title: str | None = None
+    organization: str | None = None
 
 
 class ConfirmMatch(BaseModel):
@@ -310,6 +317,18 @@ def prepare(application_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         worker.close()
+
+
+@app.post("/api/autopilot/prepare")
+def autopilot_prepare(payload: AutopilotCommand) -> dict[str, Any]:
+    parsed = urlparse(payload.source_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Enter a complete http or https form URL.")
+    organization = payload.organization or parsed.netloc
+    title = payload.title or f"Application at {organization}"
+    created = create_application(ApplicationInput(title=title, organization=organization, source_url=payload.source_url))
+    prepared = prepare(created["id"])
+    return {"application_id": created["id"], **prepared}
 
 
 @app.get("/api/applications/{application_id}/preparation")

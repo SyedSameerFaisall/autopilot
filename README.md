@@ -29,6 +29,7 @@ The app seeds a small local demo dataset on first run so the dashboard is useful
 - Safe GitHub export ingestion that proposes public, active repository links as project context while skipping private and archived repositories.
 - Safe browser preparation previews: Playwright inspects form fields, maps verified facts locally, pauses on missing answers and declarations, and keeps submission locked until required answers are reviewed.
 - Visible browser autofill handoff: reviewed draft values are typed into the live page, declarations remain untouched, a screenshot receipt is stored locally, and the final submit button is never clicked automatically.
+- Lazy-mode URL command: paste a form link once to create the tracker record, inspect the page, and open the review draft in a single step.
 - Review-before-submit API guardrail: submission calls are rejected unless approval is explicit.
 - Form-family selection for Luma, Google Forms, Microsoft Forms, and generic HTML pages.
 - A visible Playwright worker with a dedicated persistent local browser profile.

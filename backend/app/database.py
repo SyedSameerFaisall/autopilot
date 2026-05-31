@@ -123,6 +123,17 @@ CREATE TABLE IF NOT EXISTS preparation_runs (
   created_at TEXT NOT NULL,
   FOREIGN KEY(application_id) REFERENCES applications(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS browser_fill_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  application_id INTEGER NOT NULL,
+  run_id INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'launching',
+  screenshot_path TEXT,
+  state_path TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(application_id) REFERENCES applications(id) ON DELETE CASCADE,
+  FOREIGN KEY(run_id) REFERENCES preparation_runs(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS preparation_fields (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id INTEGER NOT NULL,

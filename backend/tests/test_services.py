@@ -1,5 +1,5 @@
 from backend.app.automation import map_verified_facts, select_form_adapter
-from backend.app.browser_worker import InspectedField
+from backend.app.browser_worker import InspectedField, fill_page
 from backend.app.services import classify_email
 
 
@@ -26,3 +26,31 @@ def test_map_verified_facts_pauses_for_unknown_and_sensitive_fields() -> None:
     assert mapped[0].value == "sameer@example.com"
     assert mapped[1].value is None
     assert mapped[2].value is None
+
+
+def test_fill_page_skips_declarations_and_never_clicks() -> None:
+    values: dict[str, str] = {}
+
+    class FakeLocator:
+        def __init__(self, selector: str) -> None:
+            self.selector = selector
+
+        def count(self) -> int:
+            return 1
+
+        def fill(self, value: str) -> None:
+            values[self.selector] = value
+
+        def select_option(self, value: str) -> None:
+            values[self.selector] = value
+
+    class FakePage:
+        def locator(self, selector: str) -> FakeLocator:
+            return FakeLocator(selector)
+
+    result = fill_page(FakePage(), [
+        {"label": "Email", "field_name": "email", "field_type": "email", "mapped_value": "sameer@example.com"},
+        {"label": "Declaration", "field_name": "consent", "field_type": "checkbox", "mapped_value": "yes"},
+    ])
+    assert values == {'[name="email"]': "sameer@example.com"}
+    assert result == {"filled": ["Email"], "skipped": ["Declaration"]}

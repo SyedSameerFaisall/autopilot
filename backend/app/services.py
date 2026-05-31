@@ -117,7 +117,7 @@ def prepare_application(application_id: int, inspected_fields: list[InspectedFie
             conn.execute(
                 """INSERT INTO preparation_fields(run_id, label, field_name, field_type, required, mapped_value, source_fact_id, confidence, review_status, reason)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (run_id, field.label, field.label, field.field_type, int(field.required), field.value, source_fact["id"] if source_fact else None, field.confidence, review_status, reason),
+                (run_id, field.label, field.name, field.field_type, int(field.required), field.value, source_fact["id"] if source_fact else None, field.confidence, review_status, reason),
             )
         conn.execute("UPDATE applications SET workflow_status = 'ready_for_review', updated_at = ? WHERE id = ?", (now_iso(), application_id))
         conn.execute(

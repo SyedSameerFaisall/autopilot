@@ -10,6 +10,7 @@ from .browser_worker import InspectedField
 @dataclass(frozen=True)
 class FormField:
     label: str
+    name: str
     field_type: str
     required: bool
     value: str | None = None
@@ -75,7 +76,7 @@ def map_verified_facts(fields: list[InspectedField], facts: list[dict]) -> list[
     for field in fields:
         label = normalize(f"{field.label} {field.name}")
         if any(term in label for term in SENSITIVE_TERMS):
-            mapped.append(FormField(field.label, field.field_type, field.required, confidence=0.0))
+            mapped.append(FormField(field.label, field.name, field.field_type, field.required, confidence=0.0))
             continue
         match = next(
             (
@@ -84,5 +85,5 @@ def map_verified_facts(fields: list[InspectedField], facts: list[dict]) -> list[
             ),
             None,
         )
-        mapped.append(FormField(field.label, field.field_type, field.required, match["value"] if match else None, 0.96 if match else 0.0))
+        mapped.append(FormField(field.label, field.name, field.field_type, field.required, match["value"] if match else None, 0.96 if match else 0.0))
     return mapped

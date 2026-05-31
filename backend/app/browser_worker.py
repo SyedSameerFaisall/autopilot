@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,11 +25,34 @@ def inspect_page(page: Page) -> list[InspectedField]:
         """elements => elements.map(element => ({
           label: element.labels?.[0]?.innerText || element.getAttribute('aria-label') || element.name || element.id || 'Unlabelled field',
           name: element.name || element.id || '',
-          field_type: element.tagName.toLowerCase() === 'textarea' ? 'textarea' : (element.type || element.tagName.toLowerCase()),
+          field_type: element.tagName.toLowerCase() === 'textarea' ? 'textarea' : (element.tagName.toLowerCase() === 'select' ? 'select' : (element.type || element.tagName.toLowerCase())),
           required: Boolean(element.required || element.getAttribute('aria-required') === 'true')
         }))"""
     )
     return [InspectedField(**field) for field in raw_fields]
+
+
+def fill_page(page: Page, fields: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Fill reviewed values without clicking buttons or changing declarations."""
+    filled: list[str] = []
+    skipped: list[str] = []
+    for field in fields:
+        value = str(field.get("mapped_value") or "").strip()
+        name = str(field.get("field_name") or "")
+        field_type = str(field.get("field_type") or "").lower()
+        if not value or field_type in {"checkbox", "radio", "submit", "button", "file"}:
+            skipped.append(str(field.get("label") or name))
+            continue
+        locator = page.locator(f"[name={json.dumps(name)}]")
+        if locator.count() != 1:
+            skipped.append(str(field.get("label") or name))
+            continue
+        if field_type == "select":
+            locator.select_option(value)
+        else:
+            locator.fill(value)
+        filled.append(str(field.get("label") or name))
+    return {"filled": filled, "skipped": skipped}
 
 
 class PersistentBrowserWorker:

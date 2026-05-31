@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,8 +16,8 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .browser_worker import PersistentBrowserWorker
-from .database import FILES_DIR, ROOT, db, hydrate_application, init_db, now_iso, rows
+from .browser_worker import PROFILE_DIR, PersistentBrowserWorker
+from .database import DATA_DIR, FILES_DIR, ROOT, SCREENSHOTS_DIR, db, hydrate_application, init_db, now_iso, rows
 from .integrations import EMAIL_PROVIDERS, OPPORTUNITY_ADAPTERS
 from .profile_extractor import extract_candidates, extract_github_export_candidates, extract_text
 from .services import apply_email_outcome, demo_sync, prepare_application
@@ -328,6 +332,80 @@ def update_preparation_field(field_id: int, payload: PreparationFieldUpdate) -> 
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Preparation field not found")
     return {"status": "updated"}
+
+
+@app.post("/api/applications/{application_id}/autofill")
+def autofill_application(application_id: int) -> dict[str, Any]:
+    with db() as conn:
+        run = conn.execute("SELECT * FROM preparation_runs WHERE application_id = ? ORDER BY id DESC LIMIT 1", (application_id,)).fetchone()
+        if not run:
+            raise HTTPException(status_code=409, detail="Prepare and review the application before opening browser autofill.")
+        fields = rows(conn.execute("SELECT * FROM preparation_fields WHERE run_id = ? ORDER BY id", (run["id"],)))
+        session_token = uuid.uuid4().hex
+        state_path = DATA_DIR / f"autofill-{session_token}.json"
+        payload_path = DATA_DIR / f"autofill-{session_token}-payload.json"
+        screenshot_path = SCREENSHOTS_DIR / f"autofill-{session_token}.png"
+        cursor = conn.execute(
+            """INSERT INTO browser_fill_sessions(application_id, run_id, state_path, created_at)
+               VALUES (?, ?, ?, ?)""",
+            (application_id, run["id"], str(state_path), now_iso()),
+        )
+        session_id = cursor.lastrowid
+    DATA_DIR.mkdir(exist_ok=True)
+    payload_path.write_text(
+        json.dumps(
+            {
+                "source_url": run["source_url"],
+                "fields": fields,
+                "state_path": str(state_path),
+                "screenshot_path": str(screenshot_path),
+                "profile_dir": str(PROFILE_DIR),
+            }
+        ),
+        encoding="utf-8",
+    )
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    subprocess.Popen(
+        [sys.executable, "-m", "backend.app.autofill_runner", str(payload_path)],
+        cwd=ROOT,
+        creationflags=creationflags,
+    )
+    deadline = time.time() + 12
+    state: dict[str, Any] = {"status": "launching"}
+    while time.time() < deadline:
+        if state_path.exists():
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            if state.get("status") in {"filled", "failed"}:
+                break
+        time.sleep(0.2)
+    with db() as conn:
+        conn.execute(
+            "UPDATE browser_fill_sessions SET status = ?, screenshot_path = ? WHERE id = ?",
+            (state.get("status", "launching"), state.get("screenshot_path"), session_id),
+        )
+        conn.execute(
+            "INSERT INTO timeline_events(application_id, event_type, title, detail, created_at) VALUES (?, 'autofill', 'Visible browser autofill launched', ?, ?)",
+            (application_id, f"Filled {len(state.get('filled', []))} reviewed fields without submitting the form.", now_iso()),
+        )
+    if state.get("status") == "failed":
+        raise HTTPException(status_code=400, detail=state.get("error", "Browser autofill failed"))
+    return {
+        "session_id": session_id,
+        "status": state.get("status", "launching"),
+        "filled": state.get("filled", []),
+        "skipped": state.get("skipped", []),
+        "screenshot_url": f"/api/browser-fill-sessions/{session_id}/screenshot" if state.get("screenshot_path") else None,
+        "submitted": False,
+    }
+
+
+@app.get("/api/browser-fill-sessions/{session_id}/screenshot")
+def browser_fill_screenshot(session_id: int) -> FileResponse:
+    with db() as conn:
+        session = conn.execute("SELECT screenshot_path FROM browser_fill_sessions WHERE id = ?", (session_id,)).fetchone()
+    if not session or not session["screenshot_path"] or not Path(session["screenshot_path"]).exists():
+        raise HTTPException(status_code=404, detail="Autofill screenshot not found")
+    return FileResponse(session["screenshot_path"])
 
 
 @app.post("/api/applications/{application_id}/submit")

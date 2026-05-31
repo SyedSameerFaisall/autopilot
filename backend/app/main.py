@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from .database import FILES_DIR, ROOT, db, hydrate_application, init_db, now_iso, rows
 from .integrations import EMAIL_PROVIDERS, OPPORTUNITY_ADAPTERS
-from .profile_extractor import extract_candidates, extract_text
+from .profile_extractor import extract_candidates, extract_github_export_candidates, extract_text
 from .services import apply_email_outcome, demo_sync, prepare_application
 
 @asynccontextmanager
@@ -143,6 +143,32 @@ def profile_documents() -> list[dict[str, Any]]:
         return rows(conn.execute("""SELECT profile_documents.*, COUNT(profile_candidates.id) AS candidate_count
                                    FROM profile_documents LEFT JOIN profile_candidates ON profile_candidates.document_id = profile_documents.id
                                    GROUP BY profile_documents.id ORDER BY profile_documents.created_at DESC"""))
+
+
+@app.post("/api/profile/import-github-export")
+async def import_github_export(file: UploadFile = File(...)) -> dict[str, Any]:
+    FILES_DIR.mkdir(exist_ok=True)
+    filename = Path(file.filename or "github-export.tar.gz").name
+    if not filename.lower().endswith(".tar.gz"):
+        raise HTTPException(status_code=400, detail="Upload a GitHub export .tar.gz archive.")
+    target = FILES_DIR / filename
+    target.write_bytes(await file.read())
+    try:
+        candidates = extract_github_export_candidates(target)
+    except (ValueError, OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with db() as conn:
+        cursor = conn.execute(
+            "INSERT INTO profile_documents(filename, stored_path, media_type, extraction_status, created_at) VALUES (?, ?, ?, 'complete', ?)",
+            (filename, str(target), file.content_type, now_iso()),
+        )
+        document_id = cursor.lastrowid
+        conn.executemany(
+            """INSERT INTO profile_candidates(document_id, section, label, value, confidence, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [(document_id, item.section, item.label, item.value, item.confidence, now_iso()) for item in candidates],
+        )
+    return {"id": document_id, "filename": filename, "status": "complete", "candidates": len(candidates), "message": "Public GitHub project references are ready for review."}
 
 
 @app.get("/api/profile/candidates")

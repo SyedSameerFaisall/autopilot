@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import json
+import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,4 +53,25 @@ def extract_candidates(text: str) -> list[CandidateFact]:
             if key not in seen:
                 candidates.append(CandidateFact(section, label, value, confidence))
                 seen.add(key)
+    return candidates
+
+
+def extract_github_export_candidates(path: Path) -> list[CandidateFact]:
+    with tarfile.open(path, "r:gz") as archive:
+        member = next((item for item in archive.getmembers() if item.name.lstrip("./") == "repositories_000001.json"), None)
+        if not member or not member.isfile() or member.size > 10_000_000:
+            raise ValueError("GitHub export is missing a readable repositories metadata file.")
+        extracted = archive.extractfile(member)
+        if not extracted:
+            raise ValueError("GitHub repository metadata could not be read.")
+        repositories = json.load(extracted)
+
+    candidates: list[CandidateFact] = []
+    for repository in repositories:
+        if repository.get("private") or repository.get("is_archived"):
+            continue
+        name = str(repository.get("name") or "").strip()
+        url = str(repository.get("url") or "").strip()
+        if name and url.startswith("https://github.com/"):
+            candidates.append(CandidateFact("Projects", name, url, 0.96))
     return candidates

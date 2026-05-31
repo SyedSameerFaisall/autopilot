@@ -26,6 +26,7 @@ The app seeds a small local demo dataset on first run so the dashboard is useful
 - Manual application entry, editable notes, archive actions, and a detail panel for each tracked application.
 - Profile Vault onboarding with local PDF, DOCX, TXT, and Markdown extraction.
 - A guided review queue: extracted facts remain suggestions until you explicitly verify or dismiss them.
+- Safe GitHub export ingestion that proposes public, active repository links as project context while skipping private and archived repositories.
 - Review-before-submit API guardrail: submission calls are rejected unless approval is explicit.
 - Form-family selection for Luma, Google Forms, Microsoft Forms, and generic HTML pages.
 - A visible Playwright worker with a dedicated persistent local browser profile.

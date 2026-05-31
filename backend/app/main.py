@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -9,19 +10,20 @@ from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .database import FILES_DIR, ROOT, db, hydrate_application, init_db, now_iso, rows
 from .integrations import EMAIL_PROVIDERS, OPPORTUNITY_ADAPTERS
 from .services import apply_email_outcome, demo_sync, prepare_application
 
-app = FastAPI(title="ApplyPilot API", version="0.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
-
-@app.on_event("startup")
-def startup() -> None:
+@asynccontextmanager
+async def lifespan(_: FastAPI):
     init_db()
+    yield
+
+
+app = FastAPI(title="ApplyPilot API", version="0.1.0", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 class FactInput(BaseModel):
@@ -39,7 +41,7 @@ class ApplicationInput(BaseModel):
     category: str = "Application"
     source_url: str
     deadline: str | None = None
-    tags: list[str] = []
+    tags: list[str] = Field(default_factory=list)
     notes: str = ""
 
 
@@ -47,6 +49,10 @@ class StatusUpdate(BaseModel):
     workflow_status: str | None = None
     outcome: str | None = None
     notes: str | None = None
+
+
+class SettingsUpdate(BaseModel):
+    stale_days: int = Field(ge=1, le=180)
 
 
 class ConfirmMatch(BaseModel):
@@ -138,10 +144,23 @@ def applications(
     return items
 
 
+@app.get("/api/applications/{application_id}")
+def application_detail(application_id: int) -> dict[str, Any]:
+    with db() as conn:
+        stale_days = int(conn.execute("SELECT value FROM settings WHERE key = 'stale_days'").fetchone()[0])
+        application = conn.execute("SELECT * FROM applications WHERE id = ?", (application_id,)).fetchone()
+        if not application:
+            raise HTTPException(status_code=404, detail="Application not found")
+        item = hydrate_application(application, stale_days)
+        item["timeline"] = rows(conn.execute("SELECT * FROM timeline_events WHERE application_id = ? ORDER BY created_at DESC", (application_id,)))
+        return item
+
+
 @app.post("/api/applications")
 def create_application(payload: ApplicationInput) -> dict[str, Any]:
-    follow_up = (datetime.now(timezone.utc) + timedelta(days=14)).date().isoformat()
     with db() as conn:
+        stale_days = int(conn.execute("SELECT value FROM settings WHERE key = 'stale_days'").fetchone()[0])
+        follow_up = (datetime.now(timezone.utc) + timedelta(days=stale_days)).date().isoformat()
         cursor = conn.execute(
             """INSERT INTO applications(opportunity_id, title, organization, category, source_url, deadline, tags, follow_up_at, notes, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -160,7 +179,9 @@ def update_application(application_id: int, payload: StatusUpdate) -> dict[str, 
     updates["updated_at"] = now_iso()
     assignments = ", ".join(f"{key} = ?" for key in updates)
     with db() as conn:
-        conn.execute(f"UPDATE applications SET {assignments} WHERE id = ?", (*updates.values(), application_id))
+        cursor = conn.execute(f"UPDATE applications SET {assignments} WHERE id = ?", (*updates.values(), application_id))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Application not found")
         conn.execute("INSERT INTO timeline_events(application_id, event_type, title, detail, created_at) VALUES (?, 'manual', 'Application updated', ?, ?)", (application_id, json.dumps(updates), now_iso()))
     return {"status": "updated"}
 
@@ -187,6 +208,20 @@ def submit(application_id: int, approved: bool = False) -> dict[str, Any]:
 def timeline(application_id: int) -> list[dict[str, Any]]:
     with db() as conn:
         return rows(conn.execute("SELECT * FROM timeline_events WHERE application_id = ? ORDER BY created_at DESC", (application_id,)))
+
+
+@app.get("/api/settings")
+def settings() -> dict[str, int]:
+    with db() as conn:
+        stale_days = int(conn.execute("SELECT value FROM settings WHERE key = 'stale_days'").fetchone()[0])
+    return {"stale_days": stale_days}
+
+
+@app.put("/api/settings")
+def update_settings(payload: SettingsUpdate) -> dict[str, int]:
+    with db() as conn:
+        conn.execute("INSERT INTO settings(key, value) VALUES ('stale_days', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (str(payload.stale_days),))
+    return payload.model_dump()
 
 
 @app.get("/api/email-accounts")

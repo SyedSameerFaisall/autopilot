@@ -8,10 +8,11 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .browser_worker import PersistentBrowserWorker
 from .database import FILES_DIR, ROOT, db, hydrate_application, init_db, now_iso, rows
 from .integrations import EMAIL_PROVIDERS, OPPORTUNITY_ADAPTERS
 from .profile_extractor import extract_candidates, extract_github_export_candidates, extract_text
@@ -63,6 +64,10 @@ class SettingsUpdate(BaseModel):
     stale_days: int = Field(ge=1, le=180)
 
 
+class PreparationFieldUpdate(BaseModel):
+    mapped_value: str
+
+
 class ConfirmMatch(BaseModel):
     application_id: int | None = None
     accept: bool = True
@@ -71,6 +76,19 @@ class ConfirmMatch(BaseModel):
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/demo/application-form", response_class=HTMLResponse)
+def demo_application_form() -> str:
+    return """<!doctype html><html><head><title>ApplyPilot Demo Form</title></head><body>
+    <main><h1>Hackathon registration</h1><form>
+      <label>Full name <input name="full_name" required></label>
+      <label>Email address <input name="email" type="email" required></label>
+      <label>Phone number <input name="phone" type="tel"></label>
+      <label>Why do you want to join? <textarea name="motivation" required></textarea></label>
+      <label><input name="consent" type="checkbox" required> I agree to the declaration</label>
+      <button type="submit">Submit application</button>
+    </form></main></body></html>"""
 
 
 @app.get("/api/dashboard")
@@ -276,10 +294,40 @@ def update_application(application_id: int, payload: StatusUpdate) -> dict[str, 
 
 @app.post("/api/applications/{application_id}/prepare")
 def prepare(application_id: int) -> dict[str, Any]:
+    with db() as conn:
+        application = conn.execute("SELECT source_url FROM applications WHERE id = ?", (application_id,)).fetchone()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    worker = PersistentBrowserWorker()
     try:
-        return prepare_application(application_id)
+        inspected_fields = worker.inspect(application["source_url"])
+        return prepare_application(application_id, inspected_fields)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        worker.close()
+
+
+@app.get("/api/applications/{application_id}/preparation")
+def preparation_preview(application_id: int) -> dict[str, Any]:
+    with db() as conn:
+        run = conn.execute("SELECT * FROM preparation_runs WHERE application_id = ? ORDER BY id DESC LIMIT 1", (application_id,)).fetchone()
+        if not run:
+            raise HTTPException(status_code=404, detail="No preparation run found")
+        fields = rows(conn.execute("SELECT * FROM preparation_fields WHERE run_id = ? ORDER BY id", (run["id"],)))
+    return {**dict(run), "fields": fields, "requires_approval": True}
+
+
+@app.patch("/api/preparation-fields/{field_id}")
+def update_preparation_field(field_id: int, payload: PreparationFieldUpdate) -> dict[str, str]:
+    with db() as conn:
+        cursor = conn.execute(
+            "UPDATE preparation_fields SET mapped_value = ?, review_status = 'edited', confidence = 1, reason = 'Edited during user review.' WHERE id = ?",
+            (payload.mapped_value, field_id),
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Preparation field not found")
+    return {"status": "updated"}
 
 
 @app.post("/api/applications/{application_id}/submit")
@@ -287,6 +335,12 @@ def submit(application_id: int, approved: bool = False) -> dict[str, Any]:
     if not approved:
         raise HTTPException(status_code=409, detail="Explicit approval is required before submission.")
     with db() as conn:
+        run = conn.execute("SELECT id FROM preparation_runs WHERE application_id = ? ORDER BY id DESC LIMIT 1", (application_id,)).fetchone()
+        if not run:
+            raise HTTPException(status_code=409, detail="Prepare and review the application before submission.")
+        unresolved = conn.execute("SELECT COUNT(*) FROM preparation_fields WHERE run_id = ? AND required = 1 AND (mapped_value IS NULL OR TRIM(mapped_value) = '')", (run["id"],)).fetchone()[0]
+        if unresolved:
+            raise HTTPException(status_code=409, detail=f"{unresolved} required form fields still need reviewed answers.")
         conn.execute("UPDATE applications SET workflow_status = 'submitted', submitted_at = ?, updated_at = ? WHERE id = ?", (now_iso(), now_iso(), application_id))
         conn.execute("INSERT INTO timeline_events(application_id, event_type, title, detail, created_at) VALUES (?, 'submitted', 'Submission approved', 'User approved the external submission.', ?)", (application_id, now_iso()))
     return {"application_id": application_id, "workflow_status": "submitted"}

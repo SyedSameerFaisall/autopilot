@@ -114,6 +114,30 @@ CREATE TABLE IF NOT EXISTS timeline_events (
   created_at TEXT NOT NULL,
   FOREIGN KEY(application_id) REFERENCES applications(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS preparation_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  application_id INTEGER NOT NULL,
+  adapter TEXT NOT NULL,
+  source_url TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'ready_for_review',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(application_id) REFERENCES applications(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS preparation_fields (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER NOT NULL,
+  label TEXT NOT NULL,
+  field_name TEXT NOT NULL,
+  field_type TEXT NOT NULL,
+  required INTEGER NOT NULL DEFAULT 0,
+  mapped_value TEXT,
+  source_fact_id INTEGER,
+  confidence REAL NOT NULL DEFAULT 0,
+  review_status TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY(run_id) REFERENCES preparation_runs(id) ON DELETE CASCADE,
+  FOREIGN KEY(source_fact_id) REFERENCES profile_facts(id)
+);
 CREATE TABLE IF NOT EXISTS email_accounts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   provider TEXT NOT NULL UNIQUE,

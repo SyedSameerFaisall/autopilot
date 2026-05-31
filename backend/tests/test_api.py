@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from backend.app import database
 from backend.app import main as main_module
+from backend.app.browser_worker import InspectedField
 from backend.app.main import app
 
 
@@ -92,3 +93,36 @@ def test_profile_import_requires_candidate_review(tmp_path: Path, monkeypatch) -
 
         facts = client.get("/api/profile").json()
         assert any(item["value"] == "sameer.corrected@example.com" and item["verified"] for item in facts)
+
+
+def test_preparation_preview_blocks_unresolved_required_fields(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(database, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(database, "FILES_DIR", tmp_path / "documents")
+    monkeypatch.setattr(database, "SCREENSHOTS_DIR", tmp_path / "screenshots")
+    database.init_db()
+
+    class FakeWorker:
+        def inspect(self, _: str):
+            return [
+                InspectedField("Email address", "email", "email", True),
+                InspectedField("Why do you want to join?", "motivation", "textarea", True),
+            ]
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(main_module, "PersistentBrowserWorker", FakeWorker)
+    with TestClient(app) as client:
+        client.put("/api/profile", json={"section": "Personal", "label": "Email", "value": "sameer@example.com", "verified": True})
+        created = client.post("/api/applications", json={"title": "Fixture", "organization": "ApplyPilot", "source_url": "https://example.com/apply"}).json()
+        prepared = client.post(f"/api/applications/{created['id']}/prepare")
+        assert prepared.status_code == 200
+
+        preview = client.get(f"/api/applications/{created['id']}/preparation").json()
+        assert preview["requires_approval"] is True
+        assert [field["review_status"] for field in preview["fields"]] == ["mapped", "needs_input"]
+
+        blocked = client.post(f"/api/applications/{created['id']}/submit?approved=true")
+        assert blocked.status_code == 409
+        assert "required form fields" in blocked.json()["detail"]

@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from .automation import select_form_adapter
+from .automation import map_verified_facts, select_form_adapter
+from .browser_worker import InspectedField
 from .database import db, now_iso, rows
 
 
@@ -96,16 +97,31 @@ def demo_sync() -> int:
         return conn.execute("SELECT COUNT(*) FROM email_matches").fetchone()[0]
 
 
-def prepare_application(application_id: int) -> dict[str, Any]:
+def prepare_application(application_id: int, inspected_fields: list[InspectedField]) -> dict[str, Any]:
     with db() as conn:
         application = conn.execute("SELECT * FROM applications WHERE id = ?", (application_id,)).fetchone()
         if not application:
             raise ValueError("Application not found")
         facts = rows(conn.execute("SELECT * FROM profile_facts WHERE verified = 1"))
         adapter = select_form_adapter(application["source_url"])
+        mapped_fields = map_verified_facts(inspected_fields, facts)
+        run = conn.execute(
+            "INSERT INTO preparation_runs(application_id, adapter, source_url, created_at) VALUES (?, ?, ?, ?)",
+            (application_id, adapter, application["source_url"], now_iso()),
+        )
+        run_id = run.lastrowid
+        for field in mapped_fields:
+            source_fact = next((fact for fact in facts if field.value and fact["value"] == field.value), None)
+            review_status = "mapped" if field.value else "needs_input"
+            reason = "Mapped from a verified profile fact." if field.value else "No verified profile fact matched this field."
+            conn.execute(
+                """INSERT INTO preparation_fields(run_id, label, field_name, field_type, required, mapped_value, source_fact_id, confidence, review_status, reason)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (run_id, field.label, field.label, field.field_type, int(field.required), field.value, source_fact["id"] if source_fact else None, field.confidence, review_status, reason),
+            )
         conn.execute("UPDATE applications SET workflow_status = 'ready_for_review', updated_at = ? WHERE id = ?", (now_iso(), application_id))
         conn.execute(
             "INSERT INTO timeline_events(application_id, event_type, title, detail, created_at) VALUES (?, 'prepared', 'Application prepared for review', ?, ?)",
-            (application_id, f"{adapter} adapter mapped {len(facts)} verified profile facts. Browser submission remains locked.", now_iso()),
+            (application_id, f"{adapter} adapter inspected {len(mapped_fields)} fields. Browser submission remains locked.", now_iso()),
         )
-    return {"application_id": application_id, "status": "ready_for_review", "adapter": adapter, "mapped_facts": len(facts), "requires_approval": True}
+    return {"application_id": application_id, "run_id": run_id, "status": "ready_for_review", "adapter": adapter, "mapped_fields": sum(1 for field in mapped_fields if field.value), "requires_approval": True}

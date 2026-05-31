@@ -3,12 +3,13 @@ import { createRoot } from "react-dom/client";
 import {
   Archive, CalendarDays, CheckCircle2, ChevronRight, CircleAlert, Clock3, ExternalLink,
   FileCheck2, FileText, Inbox, LayoutDashboard, ListChecks, Mail, Plus, RefreshCw, Save, Search,
-  Settings, ShieldCheck, Sparkles, Trash2, Upload, UserRound, X,
+  Settings, ShieldCheck, Sparkles, Trash2, Upload, UserRound, WandSparkles, X,
 } from "lucide-react";
 import "./styles.css";
 import "./tracker.css";
 import "./profile-vault.css";
 import "./profile-actions.css";
+import "./preparation.css";
 
 type Application = {
   id:number; title:string; organization:string; category:string; source_url:string; deadline?:string;
@@ -32,6 +33,8 @@ type Dashboard = {
   applications:Application[]; opportunities:Opportunity[]; pending_matches:number;
 };
 type AppSettings = { stale_days:number };
+type PreparationField = { id:number; label:string; field_type:string; required:number; mapped_value?:string; confidence:number; review_status:string; reason:string };
+type PreparationPreview = { id:number; application_id:number; adapter:string; source_url:string; status:string; fields:PreparationField[]; requires_approval:boolean };
 
 const api = async <T,>(path:string, options?:RequestInit):Promise<T> => {
   const response = await fetch(`/api${path}`, { headers:{"Content-Type":"application/json"}, ...options });
@@ -57,6 +60,7 @@ function App() {
   const [matches,setMatches]=useState<EmailMatch[]>([]);
   const [settings,setSettings]=useState<AppSettings>({stale_days:14});
   const [selectedApplication,setSelectedApplication]=useState<ApplicationDetail|null>(null);
+  const [preparation,setPreparation]=useState<PreparationPreview|null>(null);
   const [filter,setFilter]=useState("all");
   const [busy,setBusy]=useState(false);
   const [toast,setToast]=useState("");
@@ -76,7 +80,7 @@ function App() {
     try{await action();await load();notify(message)}catch(error){notify(error instanceof Error?error.message:"Something went wrong")}
     finally{setBusy(false)}
   };
-  const prepare=(id:number)=>run(()=>api(`/applications/${id}/prepare`,{method:"POST"}),"Application prepared for review");
+  const prepare=(id:number)=>run(async()=>{await api(`/applications/${id}/prepare`,{method:"POST"});setPreparation(await api<PreparationPreview>(`/applications/${id}/preparation`))},"Application prepared for review");
   const addOpportunity=(opp:Opportunity)=>run(()=>api("/applications",{method:"POST",body:JSON.stringify({
     opportunity_id:opp.id,title:opp.title,organization:opp.organization,category:opp.category,
     source_url:opp.source_url,deadline:opp.deadline,tags:opp.tags,
@@ -109,6 +113,7 @@ function App() {
       {view==="settings"&&<SettingsView settings={settings} run={run}/>}
     </main>
     {selectedApplication&&<ApplicationPanel application={selectedApplication} close={()=>setSelectedApplication(null)} update={updateApplication}/>}
+    {preparation&&<PreparationPanel preparation={preparation} close={()=>setPreparation(null)} refresh={async()=>setPreparation(await api<PreparationPreview>(`/applications/${preparation.application_id}/preparation`))}/>}
     {toast&&<div className="toast">{toast}</div>}{busy&&<div className="busy"><RefreshCw size={20}/></div>}
   </div>;
 }
@@ -155,6 +160,14 @@ function Profile({facts,candidates,documents,run}:{facts:Fact[];candidates:Profi
 function CandidateCard({candidate,review}:{candidate:ProfileCandidate;review:(candidate:ProfileCandidate,accept:boolean,changes?:Partial<ProfileCandidate>)=>void}) {
   const [section,setSection]=useState(candidate.section);const [label,setLabel]=useState(candidate.label);const [value,setValue]=useState(candidate.value);
   return <article className="candidate"><div className="candidate-top"><span>{candidate.filename}</span><b>{Math.round(candidate.confidence*100)}%</b></div><select value={section} onChange={e=>setSection(e.target.value)}>{["Personal","Education","Experience","Projects","Eligibility","Preferences","Links"].map(item=><option key={item}>{item}</option>)}</select><input value={label} onChange={e=>setLabel(e.target.value)}/><textarea value={value} onChange={e=>setValue(e.target.value)}/><div><button className="primary" onClick={()=>review(candidate,true,{section,label,value})}><CheckCircle2 size={15}/> Verify</button><button className="icon-btn" title="Dismiss suggestion" onClick={()=>review(candidate,false)}><Trash2 size={15}/></button></div></article>;
+}
+function PreparationPanel({preparation,close,refresh}:{preparation:PreparationPreview;close:()=>void;refresh:()=>Promise<void>}) {
+  const save=async(field:PreparationField,value:string)=>{await api(`/preparation-fields/${field.id}`,{method:"PATCH",body:JSON.stringify({mapped_value:value})});await refresh()};
+  return <aside className="preparation-panel"><div className="detail-head"><div><p className="eyebrow">Review before any browser changes</p><h2>Prepared form draft</h2><span>{preparation.adapter} · {preparation.fields.length} inspected fields</span></div><button className="icon-btn" title="Close preparation" onClick={close}><X size={17}/></button></div><div className="approval-lock"><ShieldCheck size={18}/><div><strong>Submission locked</strong><span>ApplyPilot has inspected the page only. Nothing has been typed or submitted externally.</span></div></div><section className="prepared-fields">{preparation.fields.map(field=><PreparedField key={field.id} field={field} save={save}/>)}</section></aside>;
+}
+function PreparedField({field,save}:{field:PreparationField;save:(field:PreparationField,value:string)=>Promise<void>}) {
+  const [value,setValue]=useState(field.mapped_value||"");useEffect(()=>setValue(field.mapped_value||""),[field.mapped_value]);
+  return <article className={`prepared-field ${field.review_status}`}><div className="prepared-field-head"><div><strong>{field.label}</strong><span>{field.field_type}{field.required?" · required":""}</span></div><b>{field.review_status==="needs_input"?"Needs input":display(field.review_status)}</b></div><textarea value={value} placeholder="Add a reviewed answer" onChange={e=>setValue(e.target.value)}/><div><span>{field.reason}</span><button className="secondary small" onClick={()=>save(field,value)}><Save size={14}/> Save draft</button></div></article>;
 }
 function InboxView({matches,sync,confirm}:{matches:EmailMatch[];sync:()=>void;confirm:(id:number)=>void}) {
   return <div className="content"><div className="toolbar"><div><p className="eyebrow">Read-only inbox access</p><span className="muted">Messages are never sent, deleted, archived, or marked as read.</span></div><button className="secondary" onClick={sync}><RefreshCw size={16}/> Sync inboxes</button></div><div className="list">{matches.length?matches.map(match=><article className="email-row" key={match.id}><Mail size={19}/><div className="grow"><strong>{match.subject}</strong><span>{match.sender}</span><p>{match.excerpt}</p></div><div className="email-side"><span className={`status ${match.classification}`}>{display(match.classification)}</span><small>{Math.round(match.confidence*100)}% confidence</small>{match.review_status==="pending"&&match.application_title&&<button className="secondary small" onClick={()=>confirm(match.id)}>Confirm match</button>}</div></article>):<Empty title="No matched email yet" text="Sync Gmail and Microsoft inbox adapters to reconcile application replies."/>}</div></div>;

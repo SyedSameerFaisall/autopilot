@@ -34,8 +34,9 @@ def inspect_page(page: Page) -> list[InspectedField]:
 class PersistentBrowserWorker:
     """Visible, user-controlled Playwright browser context for preparation sessions."""
 
-    def __init__(self, profile_dir: Path = PROFILE_DIR) -> None:
+    def __init__(self, profile_dir: Path = PROFILE_DIR, headless: bool = False) -> None:
         self.profile_dir = profile_dir
+        self.headless = headless
         self._playwright: Any | None = None
         self.context: BrowserContext | None = None
 
@@ -44,7 +45,7 @@ class PersistentBrowserWorker:
         self._playwright = sync_playwright().start()
         self.context = self._playwright.chromium.launch_persistent_context(
             str(self.profile_dir),
-            headless=False,
+            headless=self.headless,
         )
         return self.context
 

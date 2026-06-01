@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "ApplyPilot",
+  "version": "0.1.0",
+  "description": "Fill the current application form from your local verified ApplyPilot vault.",
+  "permissions": ["activeTab"],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "ApplyPilot: fill this page",
+    "default_popup": "popup.html"
+  }
+}

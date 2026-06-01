@@ -17,7 +17,8 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .browser_worker import PROFILE_DIR, PersistentBrowserWorker
+from .automation import map_verified_facts
+from .browser_worker import PROFILE_DIR, InspectedField, PersistentBrowserWorker
 from .database import DATA_DIR, FILES_DIR, ROOT, SCREENSHOTS_DIR, db, hydrate_application, init_db, now_iso, rows
 from .integrations import EMAIL_PROVIDERS, OPPORTUNITY_ADAPTERS
 from .profile_extractor import extract_candidates, extract_github_export_candidates, extract_text
@@ -77,6 +78,19 @@ class AutopilotCommand(BaseModel):
     source_url: str
     title: str | None = None
     organization: str | None = None
+
+
+class ExtensionPageField(BaseModel):
+    locator_id: str
+    label: str
+    name: str
+    field_type: str
+    required: bool = False
+
+
+class ExtensionFillPlanRequest(BaseModel):
+    source_url: str
+    fields: list[ExtensionPageField]
 
 
 class ConfirmMatch(BaseModel):
@@ -329,6 +343,35 @@ def autopilot_prepare(payload: AutopilotCommand) -> dict[str, Any]:
     created = create_application(ApplicationInput(title=title, organization=organization, source_url=payload.source_url))
     prepared = prepare(created["id"])
     return {"application_id": created["id"], **prepared}
+
+
+@app.post("/api/browser-extension/fill-plan")
+def browser_extension_fill_plan(payload: ExtensionFillPlanRequest) -> dict[str, Any]:
+    with db() as conn:
+        facts = rows(conn.execute("SELECT * FROM profile_facts WHERE verified = 1"))
+    inspected = [
+        InspectedField(field.label, field.name, field.field_type, field.required)
+        for field in payload.fields
+    ]
+    mapped = map_verified_facts(inspected, facts)
+    plan = [
+        {
+            "locator_id": original.locator_id,
+            "label": field.label,
+            "field_type": field.field_type,
+            "mapped_value": field.value,
+            "confidence": field.confidence,
+            "review_status": "mapped" if field.value else "needs_input",
+        }
+        for original, field in zip(payload.fields, mapped, strict=True)
+    ]
+    return {
+        "source_url": payload.source_url,
+        "fields": plan,
+        "mapped": sum(1 for field in plan if field["mapped_value"]),
+        "needs_input": sum(1 for field in plan if not field["mapped_value"]),
+        "submitted": False,
+    }
 
 
 @app.get("/api/applications/{application_id}/preparation")

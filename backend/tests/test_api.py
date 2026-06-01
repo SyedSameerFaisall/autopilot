@@ -150,3 +150,31 @@ def test_autopilot_command_creates_and_prepares_application(tmp_path: Path, monk
         detail = client.get(f"/api/applications/{application_id}").json()
         assert detail["organization"] == "forms.example.com"
         assert detail["workflow_status"] == "ready_for_review"
+
+
+def test_browser_extension_fill_plan_uses_verified_facts_and_skips_declarations(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(database, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(database, "FILES_DIR", tmp_path / "documents")
+    monkeypatch.setattr(database, "SCREENSHOTS_DIR", tmp_path / "screenshots")
+    database.init_db()
+
+    with TestClient(app) as client:
+        client.put("/api/profile", json={"section": "Personal", "label": "Email", "value": "sameer@example.com", "verified": True})
+        response = client.post(
+            "/api/browser-extension/fill-plan",
+            json={
+                "source_url": "https://forms.example.com/apply",
+                "fields": [
+                    {"locator_id": "field-0", "label": "Email address", "name": "email", "field_type": "email", "required": True},
+                    {"locator_id": "field-1", "label": "I agree to the declaration", "name": "consent", "field_type": "checkbox", "required": True},
+                ],
+            },
+        )
+        assert response.status_code == 200
+        plan = response.json()
+        assert plan["mapped"] == 1
+        assert plan["needs_input"] == 1
+        assert plan["submitted"] is False
+        assert plan["fields"][0]["mapped_value"] == "sameer@example.com"
+        assert plan["fields"][1]["mapped_value"] is None

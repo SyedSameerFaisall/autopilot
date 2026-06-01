@@ -19,6 +19,18 @@ Open `http://127.0.0.1:8000`.
 
 The app seeds a small local demo dataset on first run so the dashboard is useful before OAuth credentials are configured.
 
+## Fill the current browser tab
+
+ApplyPilot includes an unpacked Chrome extension for the primary workflow:
+
+1. Start the backend with `uvicorn backend.app.main:app --reload --port 8000`.
+2. Open `chrome://extensions`, enable **Developer mode**, and choose **Load unpacked**.
+3. Select the repository's `extension` folder.
+4. Open an application form in Chrome and click the ApplyPilot extension.
+5. Press **Fill this page**.
+
+The extension fills supported fields from verified local facts only. It leaves declarations, checkboxes, file uploads, unknown answers, and the final submit button untouched. If the backend uses another port, update the local backend URL in the popup.
+
 ## Included MVP
 
 - React dashboard with opportunities, an application tracker, profile vault, inbox match review, and local settings.
@@ -30,6 +42,7 @@ The app seeds a small local demo dataset on first run so the dashboard is useful
 - Safe browser preparation previews: Playwright inspects form fields, maps verified facts locally, pauses on missing answers and declarations, and keeps submission locked until required answers are reviewed.
 - Visible browser autofill handoff: reviewed draft values are typed into the live page, declarations remain untouched, a screenshot receipt is stored locally, and the final submit button is never clicked automatically.
 - Lazy-mode URL command: paste a form link once to create the tracker record, inspect the page, and open the review draft in a single step.
+- Current-tab Chrome extension: press **Fill this page** while viewing an application to fill supported fields directly in that tab.
 - Review-before-submit API guardrail: submission calls are rejected unless approval is explicit.
 - Form-family selection for Luma, Google Forms, Microsoft Forms, and generic HTML pages.
 - A visible Playwright worker with a dedicated persistent local browser profile.

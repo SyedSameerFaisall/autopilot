@@ -1,1 +1,5 @@
 .upload-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.fact-actions{display:flex!important;flex-direction:row!important;align-items:center;gap:7px}
+.fact-actions button{display:grid;place-items:center;border:0;background:transparent;color:#a6534c;padding:3px;border-radius:4px}
+.fact-actions button:hover{background:#fbe7e5}
+.fact-actions button svg{color:inherit}

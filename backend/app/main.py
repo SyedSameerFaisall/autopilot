@@ -166,6 +166,15 @@ def save_fact(fact: FactInput) -> dict[str, Any]:
         return {"id": cursor.lastrowid, **fact.model_dump()}
 
 
+@app.delete("/api/profile/{fact_id}")
+def delete_fact(fact_id: int) -> dict[str, str]:
+    with db() as conn:
+        cursor = conn.execute("DELETE FROM profile_facts WHERE id = ?", (fact_id,))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Profile fact not found")
+    return {"status": "deleted"}
+
+
 @app.post("/api/profile/import")
 async def import_profile(file: UploadFile = File(...)) -> dict[str, Any]:
     FILES_DIR.mkdir(exist_ok=True)

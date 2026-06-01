@@ -8,6 +8,19 @@ from backend.app.browser_worker import InspectedField
 from backend.app.main import app
 
 
+def test_profile_fact_can_be_deleted(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(database, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+    database.init_db()
+
+    with TestClient(app) as client:
+        created = client.put("/api/profile", json={"section": "Personal", "label": "Email", "value": "wrong@example.com", "verified": True})
+        response = client.delete(f"/api/profile/{created.json()['id']}")
+        assert response.status_code == 200
+        assert response.json() == {"status": "deleted"}
+        assert all(fact["value"] != "wrong@example.com" for fact in client.get("/api/profile").json())
+
+
 def test_tracker_detail_updates_and_settings(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(database, "DATA_DIR", tmp_path)
     monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")

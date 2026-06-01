@@ -34,7 +34,8 @@ fillButton.addEventListener("click", async () => {
       show(`No verified matches found. Review your Profile Vault, then retry. ${plan.needs_input} fields left for review. Nothing submitted.`, "error");
       return;
     }
-    show(`${result.filled.length} fields filled. ${result.skipped.length} left for review. Nothing submitted.`, "success");
+    const draftNote = plan.drafted ? ` ${plan.drafted} retrieved draft${plan.drafted === 1 ? "" : "s"} need your review.` : "";
+    show(`${result.filled.length} fields filled. ${result.skipped.length} left for review.${draftNote} Nothing submitted.`, "success");
   } catch (error) {
     show(error.message || "Could not fill this page.", "error");
   } finally {

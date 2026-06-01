@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Callable, Protocol
 from urllib.parse import urlparse
 
 from .browser_worker import InspectedField
@@ -15,6 +15,9 @@ class FormField:
     required: bool
     value: str | None = None
     confidence: float = 0.0
+    source_kind: str | None = None
+    source_reference: str | None = None
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -71,12 +74,16 @@ def normalize(value: str) -> str:
     return " ".join(value.lower().replace("_", " ").replace("-", " ").split())
 
 
-def map_verified_facts(fields: list[InspectedField], facts: list[dict]) -> list[FormField]:
+def map_verified_facts(
+    fields: list[InspectedField],
+    facts: list[dict],
+    retrieve: Callable[[str, str], object | None] | None = None,
+) -> list[FormField]:
     mapped: list[FormField] = []
     for field in fields:
         label = normalize(f"{field.label} {field.name}")
         if any(term in label for term in SENSITIVE_TERMS):
-            mapped.append(FormField(field.label, field.name, field.field_type, field.required, confidence=0.0))
+            mapped.append(FormField(field.label, field.name, field.field_type, field.required, reason="Sensitive or declarative field left for your review."))
             continue
         match = next(
             (
@@ -85,5 +92,18 @@ def map_verified_facts(fields: list[InspectedField], facts: list[dict]) -> list[
             ),
             None,
         )
-        mapped.append(FormField(field.label, field.name, field.field_type, field.required, match["value"] if match else None, 0.96 if match else 0.0))
+        if match:
+            mapped.append(FormField(
+                field.label, field.name, field.field_type, field.required, match["value"], 0.96,
+                "verified_fact", match["label"], "Mapped from a verified profile fact.",
+            ))
+            continue
+        retrieved = retrieve(field.label, field.field_type) if retrieve else None
+        if retrieved:
+            mapped.append(FormField(
+                field.label, field.name, field.field_type, field.required,
+                retrieved.value, retrieved.confidence, retrieved.source_kind, retrieved.source_reference, retrieved.reason,
+            ))
+            continue
+        mapped.append(FormField(field.label, field.name, field.field_type, field.required, reason="No grounded local answer matched this field."))
     return mapped

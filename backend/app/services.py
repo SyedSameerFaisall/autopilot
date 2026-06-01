@@ -8,6 +8,7 @@ from typing import Any
 from .automation import map_verified_facts, select_form_adapter
 from .browser_worker import InspectedField
 from .database import db, now_iso, rows
+from .knowledge import retrieve_answer
 
 
 @dataclass
@@ -104,7 +105,7 @@ def prepare_application(application_id: int, inspected_fields: list[InspectedFie
             raise ValueError("Application not found")
         facts = rows(conn.execute("SELECT * FROM profile_facts WHERE verified = 1"))
         adapter = select_form_adapter(application["source_url"])
-        mapped_fields = map_verified_facts(inspected_fields, facts)
+        mapped_fields = map_verified_facts(inspected_fields, facts, lambda question, field_type: retrieve_answer(conn, question, field_type))
         run = conn.execute(
             "INSERT INTO preparation_runs(application_id, adapter, source_url, created_at) VALUES (?, ?, ?, ?)",
             (application_id, adapter, application["source_url"], now_iso()),
@@ -112,8 +113,8 @@ def prepare_application(application_id: int, inspected_fields: list[InspectedFie
         run_id = run.lastrowid
         for field in mapped_fields:
             source_fact = next((fact for fact in facts if field.value and fact["value"] == field.value), None)
-            review_status = "mapped" if field.value else "needs_input"
-            reason = "Mapped from a verified profile fact." if field.value else "No verified profile fact matched this field."
+            review_status = "mapped" if field.source_kind == "verified_fact" else ("drafted" if field.value else "needs_input")
+            reason = field.reason
             conn.execute(
                 """INSERT INTO preparation_fields(run_id, label, field_name, field_type, required, mapped_value, source_fact_id, confidence, review_status, reason)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",

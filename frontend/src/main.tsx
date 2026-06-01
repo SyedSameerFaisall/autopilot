@@ -25,6 +25,7 @@ type Opportunity = {
 type Fact = { id:number; section:string; label:string; value:string; verified:number };
 type ProfileCandidate = { id:number; section:string; label:string; value:string; confidence:number; filename:string };
 type ProfileDocument = { id:number; filename:string; extraction_status:string; candidate_count:number; created_at:string };
+type KnowledgeStats = { chunks:number; answers:number; documents:number };
 type EmailMatch = {
   id:number; sender:string; subject:string; excerpt:string; classification:string; confidence:number;
   review_status:string; application_title?:string;
@@ -59,6 +60,7 @@ function App() {
   const [facts,setFacts]=useState<Fact[]>([]);
   const [profileCandidates,setProfileCandidates]=useState<ProfileCandidate[]>([]);
   const [profileDocuments,setProfileDocuments]=useState<ProfileDocument[]>([]);
+  const [knowledgeStats,setKnowledgeStats]=useState<KnowledgeStats>({chunks:0,answers:0,documents:0});
   const [matches,setMatches]=useState<EmailMatch[]>([]);
   const [settings,setSettings]=useState<AppSettings>({stale_days:14});
   const [selectedApplication,setSelectedApplication]=useState<ApplicationDetail|null>(null);
@@ -68,12 +70,12 @@ function App() {
   const [toast,setToast]=useState("");
 
   const load=async()=>{
-    const [dash,apps,opps,profile,candidates,documents,emailMatches,appSettings]=await Promise.all([
+    const [dash,apps,opps,profile,candidates,documents,knowledge,emailMatches,appSettings]=await Promise.all([
       api<Dashboard>("/dashboard"),api<Application[]>("/applications"),api<Opportunity[]>("/opportunities"),
       api<Fact[]>("/profile"),api<ProfileCandidate[]>("/profile/candidates"),api<ProfileDocument[]>("/profile/documents"),
-      api<EmailMatch[]>("/email-matches"),api<AppSettings>("/settings"),
+      api<KnowledgeStats>("/knowledge/stats"),api<EmailMatch[]>("/email-matches"),api<AppSettings>("/settings"),
     ]);
-    setDashboard(dash);setApplications(apps);setOpportunities(opps);setFacts(profile);setProfileCandidates(candidates);setProfileDocuments(documents);setMatches(emailMatches);setSettings(appSettings);
+    setDashboard(dash);setApplications(apps);setOpportunities(opps);setFacts(profile);setProfileCandidates(candidates);setProfileDocuments(documents);setKnowledgeStats(knowledge);setMatches(emailMatches);setSettings(appSettings);
   };
   useEffect(()=>{load().catch(console.error)},[]);
   const notify=(message:string)=>{setToast(message);setTimeout(()=>setToast(""),2800)};
@@ -110,7 +112,7 @@ function App() {
       {view==="dashboard"&&<DashboardView dashboard={dashboard} prepare={prepare} openApplication={openApplication} setView={setView}/>}
       {view==="opportunities"&&<Opportunities opportunities={opportunities} add={addOpportunity} importSources={()=>run(()=>api("/opportunities/import",{method:"POST"}),"Opportunity sources checked")}/>}
       {view==="applications"&&<Applications applications={filteredApps} filter={filter} setFilter={setFilter} prepare={prepare} openApplication={openApplication} run={run} autopilot={async(url)=>{const result=await api<{application_id:number}>("/autopilot/prepare",{method:"POST",body:JSON.stringify({source_url:url})});setPreparation(await api<PreparationPreview>(`/applications/${result.application_id}/preparation`));await load()}}/>}
-      {view==="profile"&&<Profile facts={facts} candidates={profileCandidates} documents={profileDocuments} run={run}/>}
+      {view==="profile"&&<Profile facts={facts} candidates={profileCandidates} documents={profileDocuments} knowledge={knowledgeStats} run={run}/>}
       {view==="inbox"&&<InboxView matches={matches} sync={sync} confirm={confirm}/>}
       {view==="settings"&&<SettingsView settings={settings} run={run}/>}
     </main>
@@ -154,14 +156,15 @@ function ApplicationPanel({application,close,update}:{application:ApplicationDet
   useEffect(()=>setNotes(application.notes||""),[application.notes]);
   return <aside className="detail-panel"><div className="detail-head"><div><p className="eyebrow">Application record</p><h2>{application.title}</h2><span>{application.organization}</span></div><button className="icon-btn" title="Close details" onClick={close}><X size={17}/></button></div><div className="detail-actions"><a className="secondary" href={application.source_url} target="_blank" rel="noreferrer"><ExternalLink size={15}/> Open form</a>{application.workflow_status!=="archived"&&<button className="secondary" onClick={()=>update(application.id,{workflow_status:"archived"})}><Archive size={15}/> Archive</button>}</div><dl><div><dt>Workflow</dt><dd>{display(application.workflow_status)}</dd></div><div><dt>Outcome</dt><dd>{display(application.outcome)}</dd></div><div><dt>Deadline</dt><dd>{formatDate(application.deadline)}</dd></div><div><dt>Follow up</dt><dd>{formatDate(application.follow_up_at)}</dd></div></dl><label className="notes-label">Notes<textarea value={notes} onChange={e=>setNotes(e.target.value)}/></label><button className="primary" onClick={()=>update(application.id,{notes})}><Save size={15}/> Save notes</button><section className="timeline"><h3>Timeline</h3>{application.timeline.map(event=><article key={event.id}><Clock3 size={15}/><div><strong>{event.title}</strong><span>{new Date(event.created_at).toLocaleString("en-GB")}</span><p>{event.detail}</p></div></article>)}</section></aside>;
 }
-function Profile({facts,candidates,documents,run}:{facts:Fact[];candidates:ProfileCandidate[];documents:ProfileDocument[];run:(a:()=>Promise<unknown>,m:string)=>void}) {
+function Profile({facts,candidates,documents,knowledge,run}:{facts:Fact[];candidates:ProfileCandidate[];documents:ProfileDocument[];knowledge:KnowledgeStats;run:(a:()=>Promise<unknown>,m:string)=>void}) {
   const [form,setForm]=useState({section:"Personal",label:"",value:""});const sections=Array.from(new Set(facts.map(f=>f.section)));
   const add=()=>{if(!form.label||!form.value)return;run(()=>api("/profile",{method:"PUT",body:JSON.stringify({...form,verified:true})}),"Verified fact added");setForm({section:"Personal",label:"",value:""})};
   const remove=(fact:Fact)=>run(()=>api(`/profile/${fact.id}`,{method:"DELETE"}),`${fact.label} removed`);
   const upload=(file:File)=>{const data=new FormData();data.append("file",file);return run(async()=>{const response=await fetch("/api/profile/import",{method:"POST",body:data});if(!response.ok)throw new Error(await response.text())},"CV analysed. Review the suggested facts.")};
   const uploadGithub=(file:File)=>{const data=new FormData();data.append("file",file);return run(async()=>{const response=await fetch("/api/profile/import-github-export",{method:"POST",body:data});if(!response.ok)throw new Error(await response.text())},"GitHub projects imported. Review the suggestions.")};
+  const reindex=()=>run(()=>api("/knowledge/reindex",{method:"POST"}),"Local knowledge vault indexed");
   const review=(candidate:ProfileCandidate,accept:boolean,changes?:Partial<ProfileCandidate>)=>run(()=>api(`/profile/candidates/${candidate.id}/review`,{method:"POST",body:JSON.stringify({accept,...changes})}),accept?"Fact verified":"Suggestion dismissed");
-  return <div className="content"><section className="profile-intro"><div><p className="eyebrow">Verified information only</p><h2>Your reusable facts</h2><span>Applications use confirmed details and pause when something is missing.</span></div><div className="upload-actions"><label className="upload"><Upload size={17}/> Import CV<input type="file" accept=".pdf,.docx,.txt,.md" onChange={e=>{const file=e.target.files?.[0];if(file)upload(file)}}/></label><label className="upload"><Upload size={17}/> Import GitHub<input type="file" accept=".tar.gz" onChange={e=>{const file=e.target.files?.[0];if(file)uploadGithub(file)}}/></label></div></section>
+  return <div className="content"><section className="profile-intro"><div><p className="eyebrow">Private local knowledge</p><h2>Your application memory</h2><span>{knowledge.chunks} searchable passages · {knowledge.answers} reviewed answers · exact details remain verified facts.</span></div><div className="upload-actions"><button className="secondary" onClick={reindex}><RefreshCw size={16}/> Reindex vault</button><label className="upload"><Upload size={17}/> Import CV<input type="file" accept=".pdf,.docx,.txt,.md" onChange={e=>{const file=e.target.files?.[0];if(file)upload(file)}}/></label><label className="upload"><Upload size={17}/> Import GitHub<input type="file" accept=".tar.gz" onChange={e=>{const file=e.target.files?.[0];if(file)uploadGithub(file)}}/></label></div></section>
     {candidates.length>0&&<section className="candidate-section"><div className="section-head"><div><p className="eyebrow">Review queue</p><h2>Confirm extracted facts</h2></div><span>{candidates.length} waiting</span></div><div className="candidate-grid">{candidates.map(candidate=><CandidateCard key={candidate.id} candidate={candidate} review={review}/>)}</div></section>}
     <div className="profile-grid"><div>{sections.map(section=><section className="fact-section" key={section}><h3>{section}</h3>{facts.filter(f=>f.section===section).map(f=><div className="fact" key={f.id}><div><strong>{f.label}</strong><span>{f.value}</span></div><div className="fact-actions">{f.verified?<CheckCircle2 size={17}/>:<CircleAlert size={17}/>}<button title={`Remove ${f.label}`} onClick={()=>remove(f)}><Trash2 size={15}/></button></div></div>)}</section>)}</div><aside><section className="add-panel"><h3>Add verified fact</h3><select value={form.section} onChange={e=>setForm({...form,section:e.target.value})}>{["Personal","Education","Experience","Projects","Eligibility","Preferences"].map(x=><option key={x}>{x}</option>)}</select><input placeholder="Label" value={form.label} onChange={e=>setForm({...form,label:e.target.value})}/><textarea placeholder="Value" value={form.value} onChange={e=>setForm({...form,value:e.target.value})}/><button className="primary" onClick={add}><Plus size={16}/> Add fact</button></section><section className="document-list"><h3>Imported documents</h3>{documents.length?documents.map(document=><article key={document.id}><FileCheck2 size={16}/><div><strong>{document.filename}</strong><span>{document.candidate_count} suggestions · {document.extraction_status}</span></div></article>):<span>No CV imported yet.</span>}</section></aside></div></div>;
 }

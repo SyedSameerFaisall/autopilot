@@ -37,6 +37,7 @@ The extension fills supported ordinary HTML and Google Forms fields from verifie
 - SQLite application history with workflow states, outcomes, configurable stale reminders, and timeline events.
 - Manual application entry, editable notes, archive actions, and a detail panel for each tracked application.
 - Profile Vault onboarding with local PDF, DOCX, TXT, and Markdown extraction.
+- Local knowledge retrieval: imported documents are indexed into searchable passages, reviewed long-form answers are remembered, and grounded drafts are marked for review before use.
 - A guided review queue: extracted facts remain suggestions until you explicitly verify or dismiss them.
 - Safe GitHub export ingestion that proposes public, active repository links as project context while skipping private and archived repositories.
 - Safe browser preparation previews: Playwright inspects form fields, maps verified facts locally, pauses on missing answers and declarations, and keeps submission locked until required answers are reviewed.

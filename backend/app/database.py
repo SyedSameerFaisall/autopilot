@@ -70,6 +70,22 @@ CREATE TABLE IF NOT EXISTS profile_candidates (
   created_at TEXT NOT NULL,
   FOREIGN KEY(document_id) REFERENCES profile_documents(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id INTEGER,
+  source_type TEXT NOT NULL,
+  source_label TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(document_id) REFERENCES profile_documents(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS answer_memory (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  question TEXT NOT NULL UNIQUE,
+  answer TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'reviewed',
+  updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS opportunities (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,

@@ -21,6 +21,7 @@ from .automation import map_verified_facts
 from .browser_worker import PROFILE_DIR, InspectedField, PersistentBrowserWorker
 from .database import DATA_DIR, FILES_DIR, ROOT, SCREENSHOTS_DIR, db, hydrate_application, init_db, now_iso, rows
 from .integrations import EMAIL_PROVIDERS, OPPORTUNITY_ADAPTERS
+from .knowledge import index_document, index_github_projects, reindex_documents, retrieve_answer, save_answer_memory
 from .profile_extractor import extract_candidates, extract_github_export_candidates, extract_text
 from .services import apply_email_outcome, demo_sync, prepare_application
 
@@ -188,12 +189,14 @@ async def import_profile(file: UploadFile = File(...)) -> dict[str, Any]:
         )
         document_id = cursor.lastrowid
         try:
-            candidates = extract_candidates(extract_text(target))
+            text = extract_text(target)
+            candidates = extract_candidates(text)
             conn.executemany(
                 """INSERT INTO profile_candidates(document_id, section, label, value, confidence, created_at)
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 [(document_id, item.section, item.label, item.value, item.confidence, now_iso()) for item in candidates],
             )
+            index_document(conn, document_id, filename, text)
             conn.execute("UPDATE profile_documents SET extraction_status = 'complete' WHERE id = ?", (document_id,))
         except ValueError as exc:
             conn.execute("UPDATE profile_documents SET extraction_status = 'unsupported' WHERE id = ?", (document_id,))
@@ -232,7 +235,29 @@ async def import_github_export(file: UploadFile = File(...)) -> dict[str, Any]:
                VALUES (?, ?, ?, ?, ?, ?)""",
             [(document_id, item.section, item.label, item.value, item.confidence, now_iso()) for item in candidates],
         )
+        index_github_projects(conn, document_id, filename, candidates)
     return {"id": document_id, "filename": filename, "status": "complete", "candidates": len(candidates), "message": "Public GitHub project references are ready for review."}
+
+
+@app.get("/api/knowledge/stats")
+def knowledge_stats() -> dict[str, int]:
+    with db() as conn:
+        return {
+            "chunks": conn.execute("SELECT COUNT(*) FROM knowledge_chunks").fetchone()[0],
+            "answers": conn.execute("SELECT COUNT(*) FROM answer_memory").fetchone()[0],
+            "documents": conn.execute("SELECT COUNT(DISTINCT document_id) FROM knowledge_chunks WHERE document_id IS NOT NULL").fetchone()[0],
+        }
+
+
+@app.post("/api/knowledge/reindex")
+def knowledge_reindex() -> dict[str, Any]:
+    with db() as conn:
+        indexed = reindex_documents(conn)
+        stats = {
+            "chunks": conn.execute("SELECT COUNT(*) FROM knowledge_chunks").fetchone()[0],
+            "answers": conn.execute("SELECT COUNT(*) FROM answer_memory").fetchone()[0],
+        }
+    return {"status": "indexed", "indexed": indexed, **stats}
 
 
 @app.get("/api/profile/candidates")
@@ -370,11 +395,11 @@ def autopilot_prepare(payload: AutopilotCommand) -> dict[str, Any]:
 def browser_extension_fill_plan(payload: ExtensionFillPlanRequest) -> dict[str, Any]:
     with db() as conn:
         facts = rows(conn.execute("SELECT * FROM profile_facts WHERE verified = 1"))
-    inspected = [
-        InspectedField(field.label, field.name, field.field_type, field.required)
-        for field in payload.fields
-    ]
-    mapped = map_verified_facts(inspected, facts)
+        inspected = [
+            InspectedField(field.label, field.name, field.field_type, field.required)
+            for field in payload.fields
+        ]
+        mapped = map_verified_facts(inspected, facts, lambda question, field_type: retrieve_answer(conn, question, field_type))
     plan = [
         {
             "locator_id": original.locator_id,
@@ -382,7 +407,10 @@ def browser_extension_fill_plan(payload: ExtensionFillPlanRequest) -> dict[str, 
             "field_type": field.field_type,
             "mapped_value": field.value,
             "confidence": field.confidence,
-            "review_status": "mapped" if field.value else "needs_input",
+            "review_status": "mapped" if field.source_kind == "verified_fact" else ("drafted" if field.value else "needs_input"),
+            "source_kind": field.source_kind,
+            "source_reference": field.source_reference,
+            "reason": field.reason,
         }
         for original, field in zip(payload.fields, mapped, strict=True)
     ]
@@ -390,6 +418,7 @@ def browser_extension_fill_plan(payload: ExtensionFillPlanRequest) -> dict[str, 
         "source_url": payload.source_url,
         "fields": plan,
         "mapped": sum(1 for field in plan if field["mapped_value"]),
+        "drafted": sum(1 for field in plan if field["review_status"] == "drafted"),
         "needs_input": sum(1 for field in plan if not field["mapped_value"]),
         "submitted": False,
     }
@@ -408,12 +437,14 @@ def preparation_preview(application_id: int) -> dict[str, Any]:
 @app.patch("/api/preparation-fields/{field_id}")
 def update_preparation_field(field_id: int, payload: PreparationFieldUpdate) -> dict[str, str]:
     with db() as conn:
+        field = conn.execute("SELECT label FROM preparation_fields WHERE id = ?", (field_id,)).fetchone()
+        if not field:
+            raise HTTPException(status_code=404, detail="Preparation field not found")
         cursor = conn.execute(
             "UPDATE preparation_fields SET mapped_value = ?, review_status = 'edited', confidence = 1, reason = 'Edited during user review.' WHERE id = ?",
             (payload.mapped_value, field_id),
         )
-        if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Preparation field not found")
+        save_answer_memory(conn, field["label"], payload.mapped_value)
     return {"status": "updated"}
 
 

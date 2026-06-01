@@ -108,6 +108,67 @@ def test_profile_import_requires_candidate_review(tmp_path: Path, monkeypatch) -
         assert any(item["value"] == "sameer.corrected@example.com" and item["verified"] for item in facts)
 
 
+def test_profile_import_indexes_local_knowledge_and_extension_retrieves_draft(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(database, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(database, "FILES_DIR", tmp_path / "documents")
+    monkeypatch.setattr(database, "SCREENSHOTS_DIR", tmp_path / "screenshots")
+    monkeypatch.setattr(main_module, "FILES_DIR", tmp_path / "documents")
+    database.init_db()
+
+    with TestClient(app) as client:
+        uploaded = client.post(
+            "/api/profile/import",
+            files={"file": ("experience.txt", b"Machine learning experience\nBuilt a machine learning classifier for brain MRI images using Python and evaluated its accuracy.", "text/plain")},
+        )
+        assert uploaded.status_code == 200
+        assert client.get("/api/knowledge/stats").json()["chunks"] == 1
+
+        plan = client.post(
+            "/api/browser-extension/fill-plan",
+            json={
+                "source_url": "https://forms.example.com/apply",
+                "fields": [
+                    {"locator_id": "field-0", "label": "Describe your machine learning experience", "name": "experience", "field_type": "textarea", "required": True},
+                ],
+            },
+        ).json()
+        assert plan["drafted"] == 1
+        assert plan["fields"][0]["review_status"] == "drafted"
+        assert "brain MRI" in plan["fields"][0]["mapped_value"]
+        assert plan["fields"][0]["source_kind"] == "knowledge_chunk"
+
+
+def test_reviewed_preparation_answer_becomes_reusable_memory(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(database, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+    database.init_db()
+    with database.db() as conn:
+        run = conn.execute(
+            "INSERT INTO preparation_runs(application_id, adapter, source_url, created_at) VALUES (1, 'Generic HTML', 'https://example.com', ?)",
+            (database.now_iso(),),
+        )
+        field = conn.execute(
+            """INSERT INTO preparation_fields(run_id, label, field_name, field_type, required, review_status)
+               VALUES (?, 'Why do you want to join this hackathon?', 'motivation', 'textarea', 1, 'needs_input')""",
+            (run.lastrowid,),
+        )
+
+    with TestClient(app) as client:
+        client.patch(f"/api/preparation-fields/{field.lastrowid}", json={"mapped_value": "I enjoy building useful AI tools with collaborative teams."})
+        plan = client.post(
+            "/api/browser-extension/fill-plan",
+            json={
+                "source_url": "https://forms.example.com/apply",
+                "fields": [
+                    {"locator_id": "field-0", "label": "Why do you want to join this hackathon?", "name": "motivation", "field_type": "textarea", "required": True},
+                ],
+            },
+        ).json()
+        assert plan["fields"][0]["source_kind"] == "answer_memory"
+        assert plan["fields"][0]["mapped_value"].startswith("I enjoy building")
+
+
 def test_preparation_preview_blocks_unresolved_required_fields(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(database, "DATA_DIR", tmp_path)
     monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")

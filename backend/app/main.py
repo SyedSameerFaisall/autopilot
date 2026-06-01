@@ -429,6 +429,8 @@ def browser_extension_fill_plan(payload: ExtensionFillPlanRequest) -> dict[str, 
             mapped = map_memory_answers(inspected, lambda fields: answer_form_fields(conn, fields))
         except AIConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     plan = [
         {
             "locator_id": original.locator_id,

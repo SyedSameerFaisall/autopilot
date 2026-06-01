@@ -39,11 +39,16 @@ fillButton.addEventListener("click", async () => {
   try {
     show("Scanning the current page...");
     const scan = await messageActiveTab({ type: "APPLYPILOT_SCAN" });
-    const response = await fetch(`${backend}/api/browser-extension/fill-plan`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(scan),
-    });
+    let response;
+    try {
+      response = await fetch(`${backend}/api/browser-extension/fill-plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(scan),
+      });
+    } catch {
+      throw new Error(`Could not reach ApplyPilot at ${backend}. Start the backend or update this URL.`);
+    }
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.detail || "ApplyPilot backend is unavailable or rejected the page.");

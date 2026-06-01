@@ -277,6 +277,23 @@ def test_browser_extension_requires_openai_key_without_model_stub(tmp_path: Path
         assert "OPENAI_API_KEY" in response.json()["detail"]
 
 
+def test_browser_extension_surfaces_openai_provider_error(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(database, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(main_module, "answer_form_fields", lambda conn, fields: (_ for _ in ()).throw(ValueError("OpenAI request failed (403): model access denied")))
+    database.init_db()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/browser-extension/fill-plan",
+            json={"source_url": "https://forms.example.com/apply", "fields": [
+                {"locator_id": "field-0", "label": "Email address", "name": "email", "field_type": "email", "required": True},
+            ]},
+        )
+        assert response.status_code == 400
+        assert "model access denied" in response.json()["detail"]
+
+
 def test_manual_memory_note_is_stored_as_searchable_context(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(database, "DATA_DIR", tmp_path)
     monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")

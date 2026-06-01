@@ -58,7 +58,7 @@ function App() {
   const [opportunities,setOpportunities]=useState<Opportunity[]>([]);
   const [profileDocuments,setProfileDocuments]=useState<ProfileDocument[]>([]);
   const [knowledgeStats,setKnowledgeStats]=useState<KnowledgeStats>({chunks:0,answers:0,documents:0});
-  const [aiStatus,setAIStatus]=useState<AIStatus>({provider:"openai",configured:false,model:"gpt-5.4-mini"});
+  const [aiStatus,setAIStatus]=useState<AIStatus>({provider:"openai",configured:false,model:"gpt-4o-mini"});
   const [matches,setMatches]=useState<EmailMatch[]>([]);
   const [settings,setSettings]=useState<AppSettings>({stale_days:14});
   const [selectedApplication,setSelectedApplication]=useState<ApplicationDetail|null>(null);

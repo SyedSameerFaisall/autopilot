@@ -59,6 +59,6 @@ def test_answer_form_fields_calls_responses_api_with_retrieved_memory(tmp_path, 
 
     assert answers[0].value == "sameer@example.com"
     assert captured["url"] == "https://api.openai.com/v1/responses"
-    assert captured["payload"]["model"] == "gpt-5.4-mini"
+    assert captured["payload"]["model"] == "gpt-4o-mini"
     assert "My email is sameer@example.com" in captured["payload"]["input"]
     assert captured["payload"]["text"]["format"]["type"] == "json_schema"

@@ -39,7 +39,7 @@ Copy-Item .env.example .env
 uvicorn backend.app.main:app --reload --port 8024
 ```
 
-The `.env` file is ignored by Git and stays on your machine. The default model is `gpt-5.4-mini`. Override it with `APPLYPILOT_OPENAI_MODEL`. Retrieved passages from your private vault are sent to OpenAI when you request form filling.
+The `.env` file is ignored by Git and stays on your machine. The default model is `gpt-4o-mini` for broad project access. Override it with `APPLYPILOT_OPENAI_MODEL` if your project supports another model. Retrieved passages from your private vault are sent to OpenAI when you request form filling.
 
 If a form tab was already open when the extension was reloaded, ApplyPilot now attaches its page script automatically. Protected browser pages such as `chrome://extensions` cannot be filled.
 

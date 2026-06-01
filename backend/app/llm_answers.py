@@ -12,7 +12,7 @@ import httpx
 from .browser_worker import InspectedField
 from .knowledge import similarity
 
-DEFAULT_MODEL = "gpt-5.4-mini"
+DEFAULT_MODEL = "gpt-4o-mini"
 
 
 class AIConfigurationError(ValueError):
@@ -129,7 +129,9 @@ PRIVATE MEMORY CONTEXT:
             },
         )
     if response.status_code >= 400:
-        raise ValueError(f"OpenAI request failed ({response.status_code}). Check your API key and model access.")
+        error = response.json().get("error", {})
+        message = error.get("message") or "Check your API key and model access."
+        raise ValueError(f"OpenAI request failed ({response.status_code}): {message}")
     payload = json.loads(_output_text(response.json()))
     answers: dict[int, GroundedAnswer] = {}
     for item in payload.get("answers", []):

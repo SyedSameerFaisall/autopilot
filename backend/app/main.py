@@ -15,7 +15,10 @@ from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+
+load_dotenv()
 
 from .automation import map_memory_answers
 from .browser_worker import PROFILE_DIR, InspectedField, PersistentBrowserWorker

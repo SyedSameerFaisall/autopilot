@@ -31,14 +31,15 @@ ApplyPilot includes an unpacked Chrome extension for the primary workflow:
 
 The extension fills supported ordinary HTML and Google Forms fields by searching your private local source vault at fill time. It leaves declarations, checkboxes, file uploads, unknown answers, and the final submit button untouched. If the backend uses another port, update the local backend URL in the popup. After an extension update, reload it from `chrome://extensions`.
 
-AI form filling uses the OpenAI Responses API. Set the API key in the PowerShell session before starting the backend:
+AI form filling uses the OpenAI Responses API. Create a local `.env` file from `.env.example`, add your key once, then start the backend:
 
 ```powershell
-$env:OPENAI_API_KEY="your-api-key"
+Copy-Item .env.example .env
+# Edit .env and replace your-api-key with your new key.
 uvicorn backend.app.main:app --reload --port 8024
 ```
 
-The default model is `gpt-5.4-mini`. Override it with `APPLYPILOT_OPENAI_MODEL`. Retrieved passages from your private vault are sent to OpenAI when you request form filling. ApplyPilot does not store your API key.
+The `.env` file is ignored by Git and stays on your machine. The default model is `gpt-5.4-mini`. Override it with `APPLYPILOT_OPENAI_MODEL`. Retrieved passages from your private vault are sent to OpenAI when you request form filling.
 
 If a form tab was already open when the extension was reloaded, ApplyPilot now attaches its page script automatically. Protected browser pages such as `chrome://extensions` cannot be filled.
 

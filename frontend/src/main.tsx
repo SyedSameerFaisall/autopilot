@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import {
   Archive, CalendarDays, CheckCircle2, ChevronRight, CircleAlert, Clock3, ExternalLink,
   FileCheck2, FileText, Inbox, LayoutDashboard, ListChecks, Mail, Plus, RefreshCw, Save, Search,
-  Settings, ShieldCheck, Sparkles, Trash2, Upload, UserRound, WandSparkles, X,
+  Settings, ShieldCheck, Sparkles, Upload, UserRound, WandSparkles, X,
 } from "lucide-react";
 import "./styles.css";
 import "./tracker.css";
@@ -22,10 +22,9 @@ type Opportunity = {
   id:number; title:string; organization:string; category:string; source:string; source_url:string;
   deadline?:string; location?:string; effort:string; fit_score:number; tags:string[]; summary:string;
 };
-type Fact = { id:number; section:string; label:string; value:string; verified:number };
-type ProfileCandidate = { id:number; section:string; label:string; value:string; confidence:number; filename:string };
 type ProfileDocument = { id:number; filename:string; extraction_status:string; candidate_count:number; created_at:string };
 type KnowledgeStats = { chunks:number; answers:number; documents:number };
+type AIStatus = { provider:string; configured:boolean; model:string };
 type EmailMatch = {
   id:number; sender:string; subject:string; excerpt:string; classification:string; confidence:number;
   review_status:string; application_title?:string;
@@ -57,10 +56,9 @@ function App() {
   const [dashboard,setDashboard]=useState<Dashboard|null>(null);
   const [applications,setApplications]=useState<Application[]>([]);
   const [opportunities,setOpportunities]=useState<Opportunity[]>([]);
-  const [facts,setFacts]=useState<Fact[]>([]);
-  const [profileCandidates,setProfileCandidates]=useState<ProfileCandidate[]>([]);
   const [profileDocuments,setProfileDocuments]=useState<ProfileDocument[]>([]);
   const [knowledgeStats,setKnowledgeStats]=useState<KnowledgeStats>({chunks:0,answers:0,documents:0});
+  const [aiStatus,setAIStatus]=useState<AIStatus>({provider:"openai",configured:false,model:"gpt-5.4-mini"});
   const [matches,setMatches]=useState<EmailMatch[]>([]);
   const [settings,setSettings]=useState<AppSettings>({stale_days:14});
   const [selectedApplication,setSelectedApplication]=useState<ApplicationDetail|null>(null);
@@ -70,12 +68,12 @@ function App() {
   const [toast,setToast]=useState("");
 
   const load=async()=>{
-    const [dash,apps,opps,profile,candidates,documents,knowledge,emailMatches,appSettings]=await Promise.all([
+    const [dash,apps,opps,documents,knowledge,ai,emailMatches,appSettings]=await Promise.all([
       api<Dashboard>("/dashboard"),api<Application[]>("/applications"),api<Opportunity[]>("/opportunities"),
-      api<Fact[]>("/profile"),api<ProfileCandidate[]>("/profile/candidates"),api<ProfileDocument[]>("/profile/documents"),
-      api<KnowledgeStats>("/knowledge/stats"),api<EmailMatch[]>("/email-matches"),api<AppSettings>("/settings"),
+      api<ProfileDocument[]>("/profile/documents"),
+      api<KnowledgeStats>("/knowledge/stats"),api<AIStatus>("/ai/status"),api<EmailMatch[]>("/email-matches"),api<AppSettings>("/settings"),
     ]);
-    setDashboard(dash);setApplications(apps);setOpportunities(opps);setFacts(profile);setProfileCandidates(candidates);setProfileDocuments(documents);setKnowledgeStats(knowledge);setMatches(emailMatches);setSettings(appSettings);
+    setDashboard(dash);setApplications(apps);setOpportunities(opps);setProfileDocuments(documents);setKnowledgeStats(knowledge);setAIStatus(ai);setMatches(emailMatches);setSettings(appSettings);
   };
   useEffect(()=>{load().catch(console.error)},[]);
   const notify=(message:string)=>{setToast(message);setTimeout(()=>setToast(""),2800)};
@@ -112,9 +110,9 @@ function App() {
       {view==="dashboard"&&<DashboardView dashboard={dashboard} prepare={prepare} openApplication={openApplication} setView={setView}/>}
       {view==="opportunities"&&<Opportunities opportunities={opportunities} add={addOpportunity} importSources={()=>run(()=>api("/opportunities/import",{method:"POST"}),"Opportunity sources checked")}/>}
       {view==="applications"&&<Applications applications={filteredApps} filter={filter} setFilter={setFilter} prepare={prepare} openApplication={openApplication} run={run} autopilot={async(url)=>{const result=await api<{application_id:number}>("/autopilot/prepare",{method:"POST",body:JSON.stringify({source_url:url})});setPreparation(await api<PreparationPreview>(`/applications/${result.application_id}/preparation`));await load()}}/>}
-      {view==="profile"&&<Profile facts={facts} candidates={profileCandidates} documents={profileDocuments} knowledge={knowledgeStats} run={run}/>}
+      {view==="profile"&&<Profile documents={profileDocuments} knowledge={knowledgeStats} run={run}/>}
       {view==="inbox"&&<InboxView matches={matches} sync={sync} confirm={confirm}/>}
-      {view==="settings"&&<SettingsView settings={settings} run={run}/>}
+      {view==="settings"&&<SettingsView settings={settings} ai={aiStatus} run={run}/>}
     </main>
     {selectedApplication&&<ApplicationPanel application={selectedApplication} close={()=>setSelectedApplication(null)} update={updateApplication}/>}
     {preparation&&<PreparationPanel preparation={preparation} close={()=>setPreparation(null)} refresh={async()=>setPreparation(await api<PreparationPreview>(`/applications/${preparation.application_id}/preparation`))}/>}
@@ -156,21 +154,14 @@ function ApplicationPanel({application,close,update}:{application:ApplicationDet
   useEffect(()=>setNotes(application.notes||""),[application.notes]);
   return <aside className="detail-panel"><div className="detail-head"><div><p className="eyebrow">Application record</p><h2>{application.title}</h2><span>{application.organization}</span></div><button className="icon-btn" title="Close details" onClick={close}><X size={17}/></button></div><div className="detail-actions"><a className="secondary" href={application.source_url} target="_blank" rel="noreferrer"><ExternalLink size={15}/> Open form</a>{application.workflow_status!=="archived"&&<button className="secondary" onClick={()=>update(application.id,{workflow_status:"archived"})}><Archive size={15}/> Archive</button>}</div><dl><div><dt>Workflow</dt><dd>{display(application.workflow_status)}</dd></div><div><dt>Outcome</dt><dd>{display(application.outcome)}</dd></div><div><dt>Deadline</dt><dd>{formatDate(application.deadline)}</dd></div><div><dt>Follow up</dt><dd>{formatDate(application.follow_up_at)}</dd></div></dl><label className="notes-label">Notes<textarea value={notes} onChange={e=>setNotes(e.target.value)}/></label><button className="primary" onClick={()=>update(application.id,{notes})}><Save size={15}/> Save notes</button><section className="timeline"><h3>Timeline</h3>{application.timeline.map(event=><article key={event.id}><Clock3 size={15}/><div><strong>{event.title}</strong><span>{new Date(event.created_at).toLocaleString("en-GB")}</span><p>{event.detail}</p></div></article>)}</section></aside>;
 }
-function Profile({facts,candidates,documents,knowledge,run}:{facts:Fact[];candidates:ProfileCandidate[];documents:ProfileDocument[];knowledge:KnowledgeStats;run:(a:()=>Promise<unknown>,m:string)=>void}) {
-  const [form,setForm]=useState({section:"Personal",label:"",value:""});const sections=Array.from(new Set(facts.map(f=>f.section)));
-  const add=()=>{if(!form.label||!form.value)return;run(()=>api("/profile",{method:"PUT",body:JSON.stringify({...form,verified:true})}),"Verified fact added");setForm({section:"Personal",label:"",value:""})};
-  const remove=(fact:Fact)=>run(()=>api(`/profile/${fact.id}`,{method:"DELETE"}),`${fact.label} removed`);
+function Profile({documents,knowledge,run}:{documents:ProfileDocument[];knowledge:KnowledgeStats;run:(a:()=>Promise<unknown>,m:string)=>void}) {
+  const [memory,setMemory]=useState({label:"",content:""});
+  const add=()=>{if(!memory.label||!memory.content)return;run(()=>api("/knowledge/memories",{method:"POST",body:JSON.stringify(memory)}),"Memory note stored");setMemory({label:"",content:""})};
   const upload=(file:File)=>{const data=new FormData();data.append("file",file);return run(async()=>{const response=await fetch("/api/profile/import",{method:"POST",body:data});if(!response.ok)throw new Error(await response.text())},"CV analysed. Review the suggested facts.")};
   const uploadGithub=(file:File)=>{const data=new FormData();data.append("file",file);return run(async()=>{const response=await fetch("/api/profile/import-github-export",{method:"POST",body:data});if(!response.ok)throw new Error(await response.text())},"GitHub projects imported. Review the suggestions.")};
   const reindex=()=>run(()=>api("/knowledge/reindex",{method:"POST"}),"Local knowledge vault indexed");
-  const review=(candidate:ProfileCandidate,accept:boolean,changes?:Partial<ProfileCandidate>)=>run(()=>api(`/profile/candidates/${candidate.id}/review`,{method:"POST",body:JSON.stringify({accept,...changes})}),accept?"Fact verified":"Suggestion dismissed");
   return <div className="content"><section className="profile-intro"><div><p className="eyebrow">Private local knowledge</p><h2>Your source data vault</h2><span>{knowledge.chunks} searchable passages · {knowledge.answers} reviewed answers · forms search your stored sources at fill time.</span></div><div className="upload-actions"><button className="secondary" onClick={reindex}><RefreshCw size={16}/> Reindex vault</button><label className="upload"><Upload size={17}/> Import CV<input type="file" accept=".pdf,.docx,.txt,.md" onChange={e=>{const file=e.target.files?.[0];if(file)upload(file)}}/></label><label className="upload"><Upload size={17}/> Import GitHub<input type="file" accept=".tar.gz" onChange={e=>{const file=e.target.files?.[0];if(file)uploadGithub(file)}}/></label></div></section>
-    {candidates.length>0&&<section className="candidate-section"><div className="section-head"><div><p className="eyebrow">Review queue</p><h2>Confirm extracted facts</h2></div><span>{candidates.length} waiting</span></div><div className="candidate-grid">{candidates.map(candidate=><CandidateCard key={candidate.id} candidate={candidate} review={review}/>)}</div></section>}
-    <div className="profile-grid"><div>{sections.map(section=><section className="fact-section" key={section}><h3>{section}</h3>{facts.filter(f=>f.section===section).map(f=><div className="fact" key={f.id}><div><strong>{f.label}</strong><span>{f.value}</span></div><div className="fact-actions">{f.verified?<CheckCircle2 size={17}/>:<CircleAlert size={17}/>}<button title={`Remove ${f.label}`} onClick={()=>remove(f)}><Trash2 size={15}/></button></div></div>)}</section>)}</div><aside><section className="add-panel"><h3>Add manual override</h3><select value={form.section} onChange={e=>setForm({...form,section:e.target.value})}>{["Personal","Education","Experience","Projects","Eligibility","Preferences"].map(x=><option key={x}>{x}</option>)}</select><input placeholder="Label" value={form.label} onChange={e=>setForm({...form,label:e.target.value})}/><textarea placeholder="Value" value={form.value} onChange={e=>setForm({...form,value:e.target.value})}/><button className="primary" onClick={add}><Plus size={16}/> Add override</button></section><section className="document-list"><h3>Imported source data</h3>{documents.length?documents.map(document=><article key={document.id}><FileCheck2 size={16}/><div><strong>{document.filename}</strong><span>{document.candidate_count} suggestions · {document.extraction_status}</span></div></article>):<span>No CV imported yet.</span>}</section></aside></div></div>;
-}
-function CandidateCard({candidate,review}:{candidate:ProfileCandidate;review:(candidate:ProfileCandidate,accept:boolean,changes?:Partial<ProfileCandidate>)=>void}) {
-  const [section,setSection]=useState(candidate.section);const [label,setLabel]=useState(candidate.label);const [value,setValue]=useState(candidate.value);
-  return <article className="candidate"><div className="candidate-top"><span>{candidate.filename}</span><b>{Math.round(candidate.confidence*100)}%</b></div><select value={section} onChange={e=>setSection(e.target.value)}>{["Personal","Education","Experience","Projects","Eligibility","Preferences","Links"].map(item=><option key={item}>{item}</option>)}</select><input value={label} onChange={e=>setLabel(e.target.value)}/><textarea value={value} onChange={e=>setValue(e.target.value)}/><div><button className="primary" onClick={()=>review(candidate,true,{section,label,value})}><CheckCircle2 size={15}/> Verify</button><button className="icon-btn" title="Dismiss suggestion" onClick={()=>review(candidate,false)}><Trash2 size={15}/></button></div></article>;
+    <div className="profile-grid"><section className="document-list"><h3>Imported source data</h3>{documents.length?documents.map(document=><article key={document.id}><FileCheck2 size={16}/><div><strong>{document.filename}</strong><span>{document.candidate_count} extracted references · {document.extraction_status}</span></div></article>):<span>No source data imported yet.</span>}</section><aside><section className="add-panel"><h3>Add memory note</h3><input placeholder="Label, such as Work preferences" value={memory.label} onChange={e=>setMemory({...memory,label:e.target.value})}/><textarea placeholder="Write anything the AI should remember when answering forms" value={memory.content} onChange={e=>setMemory({...memory,content:e.target.value})}/><button className="primary" onClick={add}><Plus size={16}/> Store memory</button></section></aside></div></div>;
 }
 function PreparationPanel({preparation,close,refresh}:{preparation:PreparationPreview;close:()=>void;refresh:()=>Promise<void>}) {
   const [receipt,setReceipt]=useState<AutofillReceipt|null>(null);const [launching,setLaunching]=useState(false);
@@ -185,9 +176,9 @@ function PreparedField({field,save}:{field:PreparationField;save:(field:Preparat
 function InboxView({matches,sync,confirm}:{matches:EmailMatch[];sync:()=>void;confirm:(id:number)=>void}) {
   return <div className="content"><div className="toolbar"><div><p className="eyebrow">Read-only inbox access</p><span className="muted">Messages are never sent, deleted, archived, or marked as read.</span></div><button className="secondary" onClick={sync}><RefreshCw size={16}/> Sync inboxes</button></div><div className="list">{matches.length?matches.map(match=><article className="email-row" key={match.id}><Mail size={19}/><div className="grow"><strong>{match.subject}</strong><span>{match.sender}</span><p>{match.excerpt}</p></div><div className="email-side"><span className={`status ${match.classification}`}>{display(match.classification)}</span><small>{Math.round(match.confidence*100)}% confidence</small>{match.review_status==="pending"&&match.application_title&&<button className="secondary small" onClick={()=>confirm(match.id)}>Confirm match</button>}</div></article>):<Empty title="No matched email yet" text="Sync Gmail and Microsoft inbox adapters to reconcile application replies."/>}</div></div>;
 }
-function SettingsView({settings,run}:{settings:AppSettings;run:(a:()=>Promise<unknown>,m:string)=>void}) {
+function SettingsView({settings,ai,run}:{settings:AppSettings;ai:AIStatus;run:(a:()=>Promise<unknown>,m:string)=>void}) {
   const [staleDays,setStaleDays]=useState(settings.stale_days);useEffect(()=>setStaleDays(settings.stale_days),[settings.stale_days]);
-  return <div className="content settings-grid"><section><h2>Inbox providers</h2><SettingRow title="Gmail" text="Read-only OAuth adapter" action="Configure"/><SettingRow title="Microsoft" text="Read-only Graph adapter" action="Configure"/></section><section><h2>Automation guardrails</h2><SettingRow title="Approval required" text="Every external submission needs your confirmation" action="Always on"/><div className="setting-row"><div><strong>No-reply reminder</strong><span>Flag pending applications after this many days</span></div><div className="number-setting"><input type="number" min="1" max="180" value={staleDays} onChange={e=>setStaleDays(Number(e.target.value))}/><button title="Save reminder days" onClick={()=>run(()=>api("/settings",{method:"PUT",body:JSON.stringify({stale_days:staleDays})}),"Reminder settings saved")}><Save size={14}/></button></div></div></section><section><h2>Browser workspace</h2><SettingRow title="Persistent browser profile" text="Reuse your local authenticated sessions" action="Local"/></section></div>;
+  return <div className="content settings-grid"><section><h2>AI answer provider</h2><SettingRow title="OpenAI Responses API" text={`${ai.model} · grounded answers from retrieved private memory`} action={ai.configured?"Configured":"API key required"}/></section><section><h2>Inbox providers</h2><SettingRow title="Gmail" text="Read-only OAuth adapter" action="Configure"/><SettingRow title="Microsoft" text="Read-only Graph adapter" action="Configure"/></section><section><h2>Automation guardrails</h2><SettingRow title="Approval required" text="Every external submission needs your confirmation" action="Always on"/><div className="setting-row"><div><strong>No-reply reminder</strong><span>Flag pending applications after this many days</span></div><div className="number-setting"><input type="number" min="1" max="180" value={staleDays} onChange={e=>setStaleDays(Number(e.target.value))}/><button title="Save reminder days" onClick={()=>run(()=>api("/settings",{method:"PUT",body:JSON.stringify({stale_days:staleDays})}),"Reminder settings saved")}><Save size={14}/></button></div></div></section><section><h2>Browser workspace</h2><SettingRow title="Persistent browser profile" text="Reuse your local authenticated sessions" action="Local"/></section></div>;
 }
 function SettingRow({title,text,action}:{title:string;text:string;action:string}){return <div className="setting-row"><div><strong>{title}</strong><span>{text}</span></div><button>{action}</button></div>}
 function SectionHead({title,action,onClick}:{title:string;action:string;onClick:()=>void}){return <div className="section-head"><h2>{title}</h2><button onClick={onClick}>{action}<ChevronRight size={16}/></button></div>}

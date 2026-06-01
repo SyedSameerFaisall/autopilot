@@ -4,7 +4,9 @@ from fastapi.testclient import TestClient
 
 from backend.app import database
 from backend.app import main as main_module
+from backend.app import services as services_module
 from backend.app.browser_worker import InspectedField
+from backend.app.llm_answers import GroundedAnswer
 from backend.app.main import app
 
 
@@ -114,6 +116,9 @@ def test_profile_import_indexes_local_knowledge_and_extension_retrieves_draft(tm
     monkeypatch.setattr(database, "FILES_DIR", tmp_path / "documents")
     monkeypatch.setattr(database, "SCREENSHOTS_DIR", tmp_path / "screenshots")
     monkeypatch.setattr(main_module, "FILES_DIR", tmp_path / "documents")
+    monkeypatch.setattr(main_module, "answer_form_fields", lambda conn, fields: {
+        0: GroundedAnswer("Built a machine learning classifier for brain MRI images using Python.", 0.91, "experience.txt", "Brain MRI classifier in CV."),
+    })
     database.init_db()
 
     with TestClient(app) as client:
@@ -136,7 +141,7 @@ def test_profile_import_indexes_local_knowledge_and_extension_retrieves_draft(tm
         assert plan["drafted"] == 1
         assert plan["fields"][0]["review_status"] == "drafted"
         assert "brain MRI" in plan["fields"][0]["mapped_value"]
-        assert plan["fields"][0]["source_kind"] == "knowledge_chunk"
+        assert plan["fields"][0]["source_kind"] == "llm_memory"
 
 
 def test_reviewed_preparation_answer_becomes_reusable_memory(tmp_path: Path, monkeypatch) -> None:
@@ -156,17 +161,7 @@ def test_reviewed_preparation_answer_becomes_reusable_memory(tmp_path: Path, mon
 
     with TestClient(app) as client:
         client.patch(f"/api/preparation-fields/{field.lastrowid}", json={"mapped_value": "I enjoy building useful AI tools with collaborative teams."})
-        plan = client.post(
-            "/api/browser-extension/fill-plan",
-            json={
-                "source_url": "https://forms.example.com/apply",
-                "fields": [
-                    {"locator_id": "field-0", "label": "Why do you want to join this hackathon?", "name": "motivation", "field_type": "textarea", "required": True},
-                ],
-            },
-        ).json()
-        assert plan["fields"][0]["source_kind"] == "answer_memory"
-        assert plan["fields"][0]["mapped_value"].startswith("I enjoy building")
+        assert client.get("/api/knowledge/stats").json()["answers"] == 1
 
 
 def test_preparation_preview_blocks_unresolved_required_fields(tmp_path: Path, monkeypatch) -> None:
@@ -187,6 +182,9 @@ def test_preparation_preview_blocks_unresolved_required_fields(tmp_path: Path, m
             pass
 
     monkeypatch.setattr(main_module, "PersistentBrowserWorker", FakeWorker)
+    monkeypatch.setattr(services_module, "answer_form_fields", lambda conn, fields: {
+        0: GroundedAnswer("sameer@example.com", 0.95, "cv.txt", "Email in CV."),
+    })
     with TestClient(app) as client:
         client.post("/api/profile/import", files={"file": ("cv.txt", b"Sameer Faisal\nsameer@example.com", "text/plain")})
         created = client.post("/api/applications", json={"title": "Fixture", "organization": "ApplyPilot", "source_url": "https://example.com/apply"}).json()
@@ -195,7 +193,7 @@ def test_preparation_preview_blocks_unresolved_required_fields(tmp_path: Path, m
 
         preview = client.get(f"/api/applications/{created['id']}/preparation").json()
         assert preview["requires_approval"] is True
-        assert [field["review_status"] for field in preview["fields"]] == ["mapped", "needs_input"]
+        assert [field["review_status"] for field in preview["fields"]] == ["drafted", "needs_input"]
 
         blocked = client.post(f"/api/applications/{created['id']}/submit?approved=true")
         assert blocked.status_code == 409
@@ -217,6 +215,7 @@ def test_autopilot_command_creates_and_prepares_application(tmp_path: Path, monk
             pass
 
     monkeypatch.setattr(main_module, "PersistentBrowserWorker", FakeWorker)
+    monkeypatch.setattr(services_module, "answer_form_fields", lambda conn, fields: {})
     with TestClient(app) as client:
         response = client.post("/api/autopilot/prepare", json={"source_url": "https://forms.example.com/apply"})
         assert response.status_code == 200
@@ -226,12 +225,15 @@ def test_autopilot_command_creates_and_prepares_application(tmp_path: Path, monk
         assert detail["workflow_status"] == "ready_for_review"
 
 
-def test_browser_extension_fill_plan_searches_source_data_and_skips_declarations(tmp_path: Path, monkeypatch) -> None:
+def test_browser_extension_fill_plan_uses_llm_memory_and_skips_declarations(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(database, "DATA_DIR", tmp_path)
     monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(database, "FILES_DIR", tmp_path / "documents")
     monkeypatch.setattr(database, "SCREENSHOTS_DIR", tmp_path / "screenshots")
     monkeypatch.setattr(main_module, "FILES_DIR", tmp_path / "documents")
+    monkeypatch.setattr(main_module, "answer_form_fields", lambda conn, fields: {
+        0: GroundedAnswer("sameer@example.com", 0.95, "cv.txt", "Email in CV."),
+    })
     database.init_db()
 
     with TestClient(app) as client:
@@ -252,50 +254,40 @@ def test_browser_extension_fill_plan_searches_source_data_and_skips_declarations
         assert plan["needs_input"] == 1
         assert plan["submitted"] is False
         assert plan["fields"][0]["mapped_value"] == "sameer@example.com"
-        assert plan["fields"][0]["source_kind"] == "source_document"
+        assert plan["fields"][0]["source_kind"] == "llm_memory"
         assert plan["fields"][1]["mapped_value"] is None
 
 
-def test_newer_source_data_wins_over_older_source_data(tmp_path: Path, monkeypatch) -> None:
+def test_browser_extension_requires_openai_key_without_model_stub(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(database, "DATA_DIR", tmp_path)
     monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(database, "FILES_DIR", tmp_path / "documents")
     monkeypatch.setattr(database, "SCREENSHOTS_DIR", tmp_path / "screenshots")
-    monkeypatch.setattr(main_module, "FILES_DIR", tmp_path / "documents")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     database.init_db()
 
     with TestClient(app) as client:
-        client.post("/api/profile/import", files={"file": ("old-cv.txt", b"Sameer Faisal\nold@example.com", "text/plain")})
-        client.post("/api/profile/import", files={"file": ("linkedin.txt", b"Contact\nnew@example.com", "text/plain")})
-        plan = client.post(
+        response = client.post(
             "/api/browser-extension/fill-plan",
             json={"source_url": "https://forms.example.com/apply", "fields": [
                 {"locator_id": "field-0", "label": "Email address", "name": "email", "field_type": "email", "required": True},
             ]},
-        ).json()
-        assert plan["fields"][0]["mapped_value"] == "new@example.com"
-        assert plan["fields"][0]["source_reference"] == "linkedin.txt"
+        )
+        assert response.status_code == 503
+        assert "OPENAI_API_KEY" in response.json()["detail"]
 
 
-def test_manual_override_wins_over_source_data(tmp_path: Path, monkeypatch) -> None:
+def test_manual_memory_note_is_stored_as_searchable_context(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(database, "DATA_DIR", tmp_path)
     monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(database, "FILES_DIR", tmp_path / "documents")
     monkeypatch.setattr(database, "SCREENSHOTS_DIR", tmp_path / "screenshots")
-    monkeypatch.setattr(main_module, "FILES_DIR", tmp_path / "documents")
     database.init_db()
 
     with TestClient(app) as client:
-        client.post("/api/profile/import", files={"file": ("cv.txt", b"Sameer Faisal\nsource@example.com", "text/plain")})
-        client.put("/api/profile", json={"section": "Personal", "label": "Email", "value": "override@example.com", "verified": True})
-        plan = client.post(
-            "/api/browser-extension/fill-plan",
-            json={"source_url": "https://forms.example.com/apply", "fields": [
-                {"locator_id": "field-0", "label": "Email address", "name": "email", "field_type": "email", "required": True},
-            ]},
-        ).json()
-        assert plan["fields"][0]["mapped_value"] == "override@example.com"
-        assert plan["fields"][0]["source_kind"] == "manual_override"
+        response = client.post("/api/knowledge/memories", json={"label": "Preferences", "content": "I prefer software roles in London."})
+        assert response.status_code == 200
+        assert client.get("/api/knowledge/stats").json()["chunks"] == 1
 
 
 def test_google_forms_style_fixture_includes_question_containers_and_hidden_controls() -> None:

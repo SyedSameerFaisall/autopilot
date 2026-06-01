@@ -44,7 +44,10 @@ fillButton.addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(scan),
     });
-    if (!response.ok) throw new Error("ApplyPilot backend is unavailable or rejected the page.");
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || "ApplyPilot backend is unavailable or rejected the page.");
+    }
     const plan = await response.json();
     const result = await messageActiveTab({ type: "APPLYPILOT_FILL", fields: plan.fields });
     if (plan.mapped === 0) {

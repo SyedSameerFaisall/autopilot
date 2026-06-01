@@ -5,10 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from .automation import map_vault_answers, select_form_adapter
+from .automation import map_memory_answers, select_form_adapter
 from .browser_worker import InspectedField
 from .database import db, now_iso, rows
-from .knowledge import search_vault_answer
+from .llm_answers import answer_form_fields
 
 
 @dataclass
@@ -104,14 +104,14 @@ def prepare_application(application_id: int, inspected_fields: list[InspectedFie
         if not application:
             raise ValueError("Application not found")
         adapter = select_form_adapter(application["source_url"])
-        mapped_fields = map_vault_answers(inspected_fields, lambda question, field_type: search_vault_answer(conn, question, field_type))
+        mapped_fields = map_memory_answers(inspected_fields, lambda fields: answer_form_fields(conn, fields))
         run = conn.execute(
             "INSERT INTO preparation_runs(application_id, adapter, source_url, created_at) VALUES (?, ?, ?, ?)",
             (application_id, adapter, application["source_url"], now_iso()),
         )
         run_id = run.lastrowid
         for field in mapped_fields:
-            review_status = "mapped" if field.source_kind in {"source_document", "manual_override"} else ("drafted" if field.value else "needs_input")
+            review_status = "drafted" if field.value else "needs_input"
             reason = field.reason
             conn.execute(
                 """INSERT INTO preparation_fields(run_id, label, field_name, field_type, required, mapped_value, source_fact_id, confidence, review_status, reason)

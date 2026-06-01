@@ -31,6 +31,15 @@ ApplyPilot includes an unpacked Chrome extension for the primary workflow:
 
 The extension fills supported ordinary HTML and Google Forms fields by searching your private local source vault at fill time. It leaves declarations, checkboxes, file uploads, unknown answers, and the final submit button untouched. If the backend uses another port, update the local backend URL in the popup. After an extension update, reload it from `chrome://extensions`.
 
+AI form filling uses the OpenAI Responses API. Set the API key in the PowerShell session before starting the backend:
+
+```powershell
+$env:OPENAI_API_KEY="your-api-key"
+uvicorn backend.app.main:app --reload --port 8024
+```
+
+The default model is `gpt-5.4-mini`. Override it with `APPLYPILOT_OPENAI_MODEL`. Retrieved passages from your private vault are sent to OpenAI when you request form filling. ApplyPilot does not store your API key.
+
 If a form tab was already open when the extension was reloaded, ApplyPilot now attaches its page script automatically. Protected browser pages such as `chrome://extensions` cannot be filled.
 
 ## Included MVP
@@ -39,7 +48,7 @@ If a form tab was already open when the extension was reloaded, ApplyPilot now a
 - SQLite application history with workflow states, outcomes, configurable stale reminders, and timeline events.
 - Manual application entry, editable notes, archive actions, and a detail panel for each tracked application.
 - Profile Vault onboarding with local PDF, DOCX, TXT, and Markdown extraction.
-- Source-first local retrieval: every fill request searches imported documents and extracted source values at runtime. Reviewed long-form answers are remembered, stale manual entries are fallback-only, and grounded drafts are marked for review before use.
+- LLM-backed memory answering: every fill request retrieves relevant stored passages and reviewed responses, then asks the OpenAI Responses API for grounded answers. Unsupported fields remain blank and generated drafts are marked for review.
 - A guided review queue: extracted facts remain suggestions until you explicitly verify or dismiss them.
 - Safe GitHub export ingestion that proposes public, active repository links as project context while skipping private and archived repositories.
 - Safe browser preparation previews: Playwright inspects form fields, maps verified facts locally, pauses on missing answers and declarations, and keeps submission locked until required answers are reviewed.

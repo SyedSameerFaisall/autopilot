@@ -65,22 +65,27 @@ def normalize(value: str) -> str:
     return " ".join(value.lower().replace("_", " ").replace("-", " ").split())
 
 
-def map_vault_answers(
+def map_memory_answers(
     fields: list[InspectedField],
-    search: Callable[[str, str], object | None],
+    answer: Callable[[list[InspectedField]], dict[int, object]],
 ) -> list[FormField]:
+    safe_fields = [field for field in fields if not any(term in normalize(f"{field.label} {field.name}") for term in SENSITIVE_TERMS)]
+    generated = answer(safe_fields)
+    generated_index = 0
     mapped: list[FormField] = []
     for field in fields:
         label = normalize(f"{field.label} {field.name}")
         if any(term in label for term in SENSITIVE_TERMS):
             mapped.append(FormField(field.label, field.name, field.field_type, field.required, reason="Sensitive or declarative field left for your review."))
             continue
-        retrieved = search(field.label, field.field_type)
+        retrieved = generated.get(generated_index)
+        generated_index += 1
         if retrieved:
             mapped.append(FormField(
                 field.label, field.name, field.field_type, field.required,
-                retrieved.value, retrieved.confidence, retrieved.source_kind, retrieved.source_reference, retrieved.reason,
+                retrieved.value, retrieved.confidence, "llm_memory", retrieved.source_reference,
+                f"AI-generated from your stored memory. Evidence: {retrieved.evidence}",
             ))
             continue
-        mapped.append(FormField(field.label, field.name, field.field_type, field.required, reason="No grounded local answer matched this field."))
+        mapped.append(FormField(field.label, field.name, field.field_type, field.required, reason="AI could not find a supported answer in your stored memory."))
     return mapped

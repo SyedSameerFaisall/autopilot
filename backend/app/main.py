@@ -17,11 +17,12 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .automation import map_vault_answers
+from .automation import map_memory_answers
 from .browser_worker import PROFILE_DIR, InspectedField, PersistentBrowserWorker
 from .database import DATA_DIR, FILES_DIR, ROOT, SCREENSHOTS_DIR, db, hydrate_application, init_db, now_iso, rows
 from .integrations import EMAIL_PROVIDERS, OPPORTUNITY_ADAPTERS
-from .knowledge import index_document, index_github_projects, reindex_documents, save_answer_memory, search_vault_answer
+from .knowledge import index_document, index_github_projects, reindex_documents, save_answer_memory
+from .llm_answers import AIConfigurationError, ai_status, answer_form_fields
 from .profile_extractor import extract_candidates, extract_github_export_candidates, extract_text
 from .services import apply_email_outcome, demo_sync, prepare_application
 
@@ -48,6 +49,11 @@ class CandidateReview(BaseModel):
     section: str | None = None
     label: str | None = None
     value: str | None = None
+
+
+class MemoryNoteInput(BaseModel):
+    label: str
+    content: str
 
 
 class ApplicationInput(BaseModel):
@@ -260,11 +266,20 @@ def knowledge_reindex() -> dict[str, Any]:
     return {"status": "indexed", "indexed": indexed, **stats}
 
 
-@app.get("/api/knowledge/search")
-def knowledge_search(question: str, field_type: str = "text") -> dict[str, Any]:
+@app.post("/api/knowledge/memories")
+def add_knowledge_memory(payload: MemoryNoteInput) -> dict[str, Any]:
     with db() as conn:
-        answer = search_vault_answer(conn, question, field_type)
-    return {"question": question, "answer": answer.__dict__ if answer else None}
+        cursor = conn.execute(
+            """INSERT INTO knowledge_chunks(document_id, source_type, source_label, content, created_at)
+               VALUES (NULL, 'manual_memory', ?, ?, ?)""",
+            (payload.label.strip(), payload.content.strip(), now_iso()),
+        )
+    return {"id": cursor.lastrowid, "status": "stored"}
+
+
+@app.get("/api/ai/status")
+def openai_status() -> dict[str, Any]:
+    return ai_status()
 
 
 @app.get("/api/profile/candidates")
@@ -380,6 +395,8 @@ def prepare(application_id: int) -> dict[str, Any]:
     try:
         inspected_fields = worker.inspect(application["source_url"])
         return prepare_application(application_id, inspected_fields)
+    except AIConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
@@ -405,7 +422,10 @@ def browser_extension_fill_plan(payload: ExtensionFillPlanRequest) -> dict[str, 
             InspectedField(field.label, field.name, field.field_type, field.required)
             for field in payload.fields
         ]
-        mapped = map_vault_answers(inspected, lambda question, field_type: search_vault_answer(conn, question, field_type))
+        try:
+            mapped = map_memory_answers(inspected, lambda fields: answer_form_fields(conn, fields))
+        except AIConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     plan = [
         {
             "locator_id": original.locator_id,
@@ -413,7 +433,7 @@ def browser_extension_fill_plan(payload: ExtensionFillPlanRequest) -> dict[str, 
             "field_type": field.field_type,
             "mapped_value": field.value,
             "confidence": field.confidence,
-            "review_status": "mapped" if field.source_kind in {"source_document", "manual_override"} else ("drafted" if field.value else "needs_input"),
+            "review_status": "drafted" if field.value else "needs_input",
             "source_kind": field.source_kind,
             "source_reference": field.source_reference,
             "reason": field.reason,

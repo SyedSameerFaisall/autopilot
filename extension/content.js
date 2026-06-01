@@ -1,8 +1,27 @@
 const APPLY_PILOT_ATTRIBUTE = "data-applypilot-id";
 
+function textFromIds(ids) {
+  return (ids || "")
+    .split(/\s+/)
+    .map((id) => document.getElementById(id)?.innerText || document.getElementById(id)?.textContent || "")
+    .join(" ")
+    .trim();
+}
+
+function getQuestionLabel(element) {
+  const container = element.closest('[role="listitem"], .Qr7Oae');
+  return (
+    container?.querySelector('[role="heading"]')?.innerText ||
+    container?.querySelector(".M7eMe")?.innerText ||
+    ""
+  ).trim();
+}
+
 function getLabel(element) {
   return (
     element.labels?.[0]?.innerText ||
+    getQuestionLabel(element) ||
+    textFromIds(element.getAttribute("aria-labelledby")) ||
     element.getAttribute("aria-label") ||
     element.getAttribute("placeholder") ||
     element.name ||
@@ -17,8 +36,12 @@ function getFieldType(element) {
   return element.type || tag;
 }
 
+function isRelevant(element) {
+  return !element.disabled && !["hidden", "submit", "button", "reset"].includes(getFieldType(element));
+}
+
 function collectFields() {
-  return Array.from(document.querySelectorAll("input, textarea, select")).map((element, index) => {
+  return Array.from(document.querySelectorAll("input, textarea, select")).filter(isRelevant).map((element, index) => {
     const locatorId = `applypilot-${index}`;
     element.setAttribute(APPLY_PILOT_ATTRIBUTE, locatorId);
     return {
@@ -31,6 +54,18 @@ function collectFields() {
   });
 }
 
+function setNativeValue(element, value) {
+  const prototype =
+    element instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : element instanceof HTMLSelectElement
+        ? HTMLSelectElement.prototype
+        : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+  if (setter) setter.call(element, value);
+  else element.value = value;
+}
+
 function fillPlan(fields) {
   const filled = [];
   const skipped = [];
@@ -40,7 +75,7 @@ function fillPlan(fields) {
       skipped.push(field.label);
       continue;
     }
-    element.value = field.mapped_value;
+    setNativeValue(element, field.mapped_value);
     element.dispatchEvent(new Event("input", { bubbles: true }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
     filled.push(field.label);

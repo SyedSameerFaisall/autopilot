@@ -30,6 +30,10 @@ fillButton.addEventListener("click", async () => {
     if (!response.ok) throw new Error("ApplyPilot backend is unavailable or rejected the page.");
     const plan = await response.json();
     const result = await messageActiveTab({ type: "APPLYPILOT_FILL", fields: plan.fields });
+    if (plan.mapped === 0) {
+      show(`No verified matches found. Review your Profile Vault, then retry. ${plan.needs_input} fields left for review. Nothing submitted.`, "error");
+      return;
+    }
     show(`${result.filled.length} fields filled. ${result.skipped.length} left for review. Nothing submitted.`, "success");
   } catch (error) {
     show(error.message || "Could not fill this page.", "error");

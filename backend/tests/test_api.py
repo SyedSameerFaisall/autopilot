@@ -178,3 +178,12 @@ def test_browser_extension_fill_plan_uses_verified_facts_and_skips_declarations(
         assert plan["submitted"] is False
         assert plan["fields"][0]["mapped_value"] == "sameer@example.com"
         assert plan["fields"][1]["mapped_value"] is None
+
+
+def test_google_forms_style_fixture_includes_question_containers_and_hidden_controls() -> None:
+    with TestClient(app) as client:
+        response = client.get("/demo/google-form-style")
+        assert response.status_code == 200
+        assert response.text.count('role="listitem"') == 3
+        assert 'type="hidden"' in response.text
+        assert 'type="submit"' in response.text

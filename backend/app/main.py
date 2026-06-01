@@ -116,6 +116,18 @@ def demo_application_form() -> str:
     </form></main></body></html>"""
 
 
+@app.get("/demo/google-form-style", response_class=HTMLResponse)
+def demo_google_form_style() -> str:
+    return """<!doctype html><html><head><title>ApplyPilot Google Forms Fixture</title></head><body>
+    <main><h1>Basic contact information</h1><form>
+      <input type="hidden" name="pageHistory" value="0">
+      <div class="Qr7Oae" role="listitem"><div class="M7eMe" role="heading">Full Name</div><input name="entry.1" required></div>
+      <div class="Qr7Oae" role="listitem"><div class="M7eMe" role="heading">Email Address</div><input name="entry.2" type="email" required></div>
+      <div class="Qr7Oae" role="listitem"><div class="M7eMe" role="heading">Phone Number</div><input name="entry.3" type="tel"></div>
+      <input type="submit" value="Submit">
+    </form></main></body></html>"""
+
+
 @app.get("/api/dashboard")
 def dashboard() -> dict[str, Any]:
     with db() as conn:

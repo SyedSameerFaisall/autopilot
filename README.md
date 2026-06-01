@@ -29,7 +29,9 @@ ApplyPilot includes an unpacked Chrome extension for the primary workflow:
 4. Open an application form in Chrome and click the ApplyPilot extension.
 5. Press **Fill this page**.
 
-The extension fills supported ordinary HTML and Google Forms fields from verified local facts only. It leaves declarations, checkboxes, file uploads, unknown answers, and the final submit button untouched. If the backend uses another port, update the local backend URL in the popup. After an extension update, reload it from `chrome://extensions` and refresh the form tab.
+The extension fills supported ordinary HTML and Google Forms fields by searching your private local source vault at fill time. It leaves declarations, checkboxes, file uploads, unknown answers, and the final submit button untouched. If the backend uses another port, update the local backend URL in the popup. After an extension update, reload it from `chrome://extensions`.
+
+If a form tab was already open when the extension was reloaded, ApplyPilot now attaches its page script automatically. Protected browser pages such as `chrome://extensions` cannot be filled.
 
 ## Included MVP
 

@@ -9,10 +9,27 @@ function show(message, className = "") {
   status.textContent = message;
 }
 
-async function messageActiveTab(message) {
+async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("Open an application form in the active tab.");
-  return chrome.tabs.sendMessage(tab.id, message);
+  if (!/^https?:\/\//.test(tab.url || "")) {
+    throw new Error("Open an ordinary http or https application form. Chrome system pages cannot be filled.");
+  }
+  return tab;
+}
+
+async function messageActiveTab(message) {
+  const tab = await getActiveTab();
+  try {
+    return await chrome.tabs.sendMessage(tab.id, message);
+  } catch {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
+      return await chrome.tabs.sendMessage(tab.id, message);
+    } catch {
+      throw new Error("ApplyPilot could not attach to this page. Refresh the form tab and retry.");
+    }
+  }
 }
 
 fillButton.addEventListener("click", async () => {

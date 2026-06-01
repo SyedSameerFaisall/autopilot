@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "ApplyPilot",
-  "version": "0.1.0",
-  "description": "Fill the current application form from your local verified ApplyPilot vault.",
-  "permissions": ["activeTab"],
+  "version": "0.1.1",
+  "description": "Fill the current application form by searching your private local ApplyPilot vault.",
+  "permissions": ["activeTab", "scripting"],
   "host_permissions": [
     "http://127.0.0.1/*",
     "http://localhost/*"

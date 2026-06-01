@@ -17,6 +17,16 @@ STOP_WORDS = {
     "have", "how", "in", "is", "it", "of", "on", "or", "please", "tell", "that", "the", "this",
     "to", "use", "what", "when", "where", "why", "with", "would", "you", "your",
 }
+FIELD_ALIASES = {
+    "full name": ("full name", "name", "your name"),
+    "email": ("email", "email address"),
+    "phone": ("phone", "telephone", "mobile", "contact number"),
+    "linkedin": ("linkedin",),
+    "github": ("github",),
+    "portfolio": ("portfolio", "website", "personal site"),
+    "current course": ("course", "degree", "programme", "program"),
+}
+PLACEHOLDER_VALUES = {"your name", "you@example.com", "add your degree or course"}
 
 
 @dataclass(frozen=True)
@@ -39,6 +49,27 @@ def similarity(query: str, text: str) -> float:
         return 0.0
     overlap = sum(min(count, text_terms[term]) for term, count in query_terms.items())
     return overlap / math.sqrt(sum(query_terms.values()) * sum(text_terms.values()))
+
+
+def normalize(value: str) -> str:
+    return " ".join(value.lower().replace("_", " ").replace("-", " ").split())
+
+
+def requested_field(question: str) -> str | None:
+    normalized = normalize(question)
+    for field, aliases in FIELD_ALIASES.items():
+        if any(alias in normalized for alias in aliases):
+            return field
+    return None
+
+
+def usable_exact_value(field: str, value: str) -> bool:
+    normalized = normalize(value)
+    if not normalized or normalized in PLACEHOLDER_VALUES:
+        return False
+    if field == "full name":
+        return len(value.split()) >= 2 and normalized not in {"contact", "profile", "resume", "curriculum vitae"}
+    return True
 
 
 def chunk_text(text: str, max_chars: int = 700) -> list[str]:
@@ -145,3 +176,44 @@ def retrieve_answer(conn: sqlite3.Connection, question: str, field_type: str) ->
         chunk["source_label"],
         f"Drafted from local source evidence in {chunk['source_label']}. Review before use.",
     )
+
+
+def search_vault_answer(conn: sqlite3.Connection, question: str, field_type: str) -> RetrievedAnswer | None:
+    field = requested_field(question)
+    if field:
+        manual_entries = conn.execute(
+            """SELECT * FROM profile_facts
+               WHERE verified = 1 AND source = 'manual'
+               ORDER BY updated_at DESC, id DESC"""
+        ).fetchall()
+        match = next((
+            entry for entry in manual_entries
+            if normalize(entry["label"]) == field
+            and usable_exact_value(field, entry["value"])
+        ), None)
+        if match:
+            return RetrievedAnswer(
+                match["value"], 0.99, "manual_override", match["label"],
+                "Found in an override that you manually provided.",
+            )
+
+        candidates = conn.execute(
+            """SELECT profile_candidates.*, profile_documents.filename
+               FROM profile_candidates JOIN profile_documents ON profile_documents.id = profile_candidates.document_id
+               WHERE profile_candidates.review_status != 'dismissed'
+               ORDER BY profile_candidates.document_id DESC, profile_candidates.confidence DESC, profile_candidates.id DESC"""
+        ).fetchall()
+        match = next((
+            candidate for candidate in candidates
+            if normalize(candidate["label"]) == field
+            and usable_exact_value(field, candidate["value"])
+        ), None)
+        if match:
+            return RetrievedAnswer(
+                match["value"],
+                min(0.97, round(float(match["confidence"]) + 0.01, 2)),
+                "source_document",
+                match["filename"],
+                f"Found in your stored source data: {match['filename']}.",
+            )
+    return retrieve_answer(conn, question, field_type)

@@ -17,11 +17,11 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .automation import map_verified_facts
+from .automation import map_vault_answers
 from .browser_worker import PROFILE_DIR, InspectedField, PersistentBrowserWorker
 from .database import DATA_DIR, FILES_DIR, ROOT, SCREENSHOTS_DIR, db, hydrate_application, init_db, now_iso, rows
 from .integrations import EMAIL_PROVIDERS, OPPORTUNITY_ADAPTERS
-from .knowledge import index_document, index_github_projects, reindex_documents, retrieve_answer, save_answer_memory
+from .knowledge import index_document, index_github_projects, reindex_documents, save_answer_memory, search_vault_answer
 from .profile_extractor import extract_candidates, extract_github_export_candidates, extract_text
 from .services import apply_email_outcome, demo_sync, prepare_application
 
@@ -260,6 +260,13 @@ def knowledge_reindex() -> dict[str, Any]:
     return {"status": "indexed", "indexed": indexed, **stats}
 
 
+@app.get("/api/knowledge/search")
+def knowledge_search(question: str, field_type: str = "text") -> dict[str, Any]:
+    with db() as conn:
+        answer = search_vault_answer(conn, question, field_type)
+    return {"question": question, "answer": answer.__dict__ if answer else None}
+
+
 @app.get("/api/profile/candidates")
 def profile_candidates(review_status: str = "pending") -> list[dict[str, Any]]:
     with db() as conn:
@@ -394,12 +401,11 @@ def autopilot_prepare(payload: AutopilotCommand) -> dict[str, Any]:
 @app.post("/api/browser-extension/fill-plan")
 def browser_extension_fill_plan(payload: ExtensionFillPlanRequest) -> dict[str, Any]:
     with db() as conn:
-        facts = rows(conn.execute("SELECT * FROM profile_facts WHERE verified = 1"))
         inspected = [
             InspectedField(field.label, field.name, field.field_type, field.required)
             for field in payload.fields
         ]
-        mapped = map_verified_facts(inspected, facts, lambda question, field_type: retrieve_answer(conn, question, field_type))
+        mapped = map_vault_answers(inspected, lambda question, field_type: search_vault_answer(conn, question, field_type))
     plan = [
         {
             "locator_id": original.locator_id,
@@ -407,7 +413,7 @@ def browser_extension_fill_plan(payload: ExtensionFillPlanRequest) -> dict[str, 
             "field_type": field.field_type,
             "mapped_value": field.value,
             "confidence": field.confidence,
-            "review_status": "mapped" if field.source_kind == "verified_fact" else ("drafted" if field.value else "needs_input"),
+            "review_status": "mapped" if field.source_kind in {"source_document", "manual_override"} else ("drafted" if field.value else "needs_input"),
             "source_kind": field.source_kind,
             "source_reference": field.source_reference,
             "reason": field.reason,

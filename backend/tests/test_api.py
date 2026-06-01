@@ -188,7 +188,7 @@ def test_preparation_preview_blocks_unresolved_required_fields(tmp_path: Path, m
 
     monkeypatch.setattr(main_module, "PersistentBrowserWorker", FakeWorker)
     with TestClient(app) as client:
-        client.put("/api/profile", json={"section": "Personal", "label": "Email", "value": "sameer@example.com", "verified": True})
+        client.post("/api/profile/import", files={"file": ("cv.txt", b"Sameer Faisal\nsameer@example.com", "text/plain")})
         created = client.post("/api/applications", json={"title": "Fixture", "organization": "ApplyPilot", "source_url": "https://example.com/apply"}).json()
         prepared = client.post(f"/api/applications/{created['id']}/prepare")
         assert prepared.status_code == 200
@@ -226,15 +226,16 @@ def test_autopilot_command_creates_and_prepares_application(tmp_path: Path, monk
         assert detail["workflow_status"] == "ready_for_review"
 
 
-def test_browser_extension_fill_plan_uses_verified_facts_and_skips_declarations(tmp_path: Path, monkeypatch) -> None:
+def test_browser_extension_fill_plan_searches_source_data_and_skips_declarations(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(database, "DATA_DIR", tmp_path)
     monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(database, "FILES_DIR", tmp_path / "documents")
     monkeypatch.setattr(database, "SCREENSHOTS_DIR", tmp_path / "screenshots")
+    monkeypatch.setattr(main_module, "FILES_DIR", tmp_path / "documents")
     database.init_db()
 
     with TestClient(app) as client:
-        client.put("/api/profile", json={"section": "Personal", "label": "Email", "value": "sameer@example.com", "verified": True})
+        client.post("/api/profile/import", files={"file": ("cv.txt", b"Sameer Faisal\nsameer@example.com", "text/plain")})
         response = client.post(
             "/api/browser-extension/fill-plan",
             json={
@@ -251,7 +252,50 @@ def test_browser_extension_fill_plan_uses_verified_facts_and_skips_declarations(
         assert plan["needs_input"] == 1
         assert plan["submitted"] is False
         assert plan["fields"][0]["mapped_value"] == "sameer@example.com"
+        assert plan["fields"][0]["source_kind"] == "source_document"
         assert plan["fields"][1]["mapped_value"] is None
+
+
+def test_newer_source_data_wins_over_older_source_data(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(database, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(database, "FILES_DIR", tmp_path / "documents")
+    monkeypatch.setattr(database, "SCREENSHOTS_DIR", tmp_path / "screenshots")
+    monkeypatch.setattr(main_module, "FILES_DIR", tmp_path / "documents")
+    database.init_db()
+
+    with TestClient(app) as client:
+        client.post("/api/profile/import", files={"file": ("old-cv.txt", b"Sameer Faisal\nold@example.com", "text/plain")})
+        client.post("/api/profile/import", files={"file": ("linkedin.txt", b"Contact\nnew@example.com", "text/plain")})
+        plan = client.post(
+            "/api/browser-extension/fill-plan",
+            json={"source_url": "https://forms.example.com/apply", "fields": [
+                {"locator_id": "field-0", "label": "Email address", "name": "email", "field_type": "email", "required": True},
+            ]},
+        ).json()
+        assert plan["fields"][0]["mapped_value"] == "new@example.com"
+        assert plan["fields"][0]["source_reference"] == "linkedin.txt"
+
+
+def test_manual_override_wins_over_source_data(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(database, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(database, "FILES_DIR", tmp_path / "documents")
+    monkeypatch.setattr(database, "SCREENSHOTS_DIR", tmp_path / "screenshots")
+    monkeypatch.setattr(main_module, "FILES_DIR", tmp_path / "documents")
+    database.init_db()
+
+    with TestClient(app) as client:
+        client.post("/api/profile/import", files={"file": ("cv.txt", b"Sameer Faisal\nsource@example.com", "text/plain")})
+        client.put("/api/profile", json={"section": "Personal", "label": "Email", "value": "override@example.com", "verified": True})
+        plan = client.post(
+            "/api/browser-extension/fill-plan",
+            json={"source_url": "https://forms.example.com/apply", "fields": [
+                {"locator_id": "field-0", "label": "Email address", "name": "email", "field_type": "email", "required": True},
+            ]},
+        ).json()
+        assert plan["fields"][0]["mapped_value"] == "override@example.com"
+        assert plan["fields"][0]["source_kind"] == "manual_override"
 
 
 def test_google_forms_style_fixture_includes_question_containers_and_hidden_controls() -> None:

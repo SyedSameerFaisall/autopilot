@@ -31,7 +31,7 @@ fillButton.addEventListener("click", async () => {
     const plan = await response.json();
     const result = await messageActiveTab({ type: "APPLYPILOT_FILL", fields: plan.fields });
     if (plan.mapped === 0) {
-      show(`No verified matches found. Review your Profile Vault, then retry. ${plan.needs_input} fields left for review. Nothing submitted.`, "error");
+      show(`No answers found in your local vault. Import or reindex your source data, then retry. ${plan.needs_input} fields left for review. Nothing submitted.`, "error");
       return;
     }
     const draftNote = plan.drafted ? ` ${plan.drafted} retrieved draft${plan.drafted === 1 ? "" : "s"} need your review.` : "";

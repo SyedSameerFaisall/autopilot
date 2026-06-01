@@ -59,25 +59,15 @@ def select_form_adapter(url: str) -> str:
 
 
 SENSITIVE_TERMS = ("gender", "ethnicity", "disability", "salary", "consent", "agree", "declaration", "visa", "sponsorship", "authorization")
-FACT_ALIASES = {
-    "full name": ("full name", "name", "your name"),
-    "email": ("email", "email address"),
-    "phone": ("phone", "telephone", "mobile", "contact number"),
-    "linkedin": ("linkedin",),
-    "github": ("github",),
-    "portfolio": ("portfolio", "website", "personal site"),
-    "current course": ("course", "degree", "programme", "program"),
-}
 
 
 def normalize(value: str) -> str:
     return " ".join(value.lower().replace("_", " ").replace("-", " ").split())
 
 
-def map_verified_facts(
+def map_vault_answers(
     fields: list[InspectedField],
-    facts: list[dict],
-    retrieve: Callable[[str, str], object | None] | None = None,
+    search: Callable[[str, str], object | None],
 ) -> list[FormField]:
     mapped: list[FormField] = []
     for field in fields:
@@ -85,20 +75,7 @@ def map_verified_facts(
         if any(term in label for term in SENSITIVE_TERMS):
             mapped.append(FormField(field.label, field.name, field.field_type, field.required, reason="Sensitive or declarative field left for your review."))
             continue
-        match = next(
-            (
-                fact for fact in facts
-                if any(alias in label for alias in FACT_ALIASES.get(normalize(fact["label"]), (normalize(fact["label"]),)))
-            ),
-            None,
-        )
-        if match:
-            mapped.append(FormField(
-                field.label, field.name, field.field_type, field.required, match["value"], 0.96,
-                "verified_fact", match["label"], "Mapped from a verified profile fact.",
-            ))
-            continue
-        retrieved = retrieve(field.label, field.field_type) if retrieve else None
+        retrieved = search(field.label, field.field_type)
         if retrieved:
             mapped.append(FormField(
                 field.label, field.name, field.field_type, field.required,

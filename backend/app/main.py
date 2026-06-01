@@ -138,6 +138,14 @@ def demo_google_form_style() -> str:
     </form></main></body></html>"""
 
 
+@app.get("/forms/d/demo/edit", response_class=HTMLResponse)
+def demo_google_form_editor_style() -> str:
+    return """<!doctype html><html><head><title>ApplyPilot Google Forms Editor Fixture</title></head><body>
+    <main><h1>Form editor</h1><input aria-label="Form title"><input aria-label="Question title">
+      <aside><button>Add question</button><input aria-label="Toolbar control"></aside>
+    </main></body></html>"""
+
+
 @app.get("/api/dashboard")
 def dashboard() -> dict[str, Any]:
     with db() as conn:

@@ -43,6 +43,8 @@ The `.env` file is ignored by Git and stays on your machine. The default model i
 
 If a form tab was already open when the extension was reloaded, ApplyPilot now attaches its page script automatically. Protected browser pages such as `chrome://extensions` cannot be filled.
 
+For Google Forms, run ApplyPilot on the respondent `viewform` page. If you are editing a form, press the Google Forms **Preview** button first.
+
 ## Included MVP
 
 - React dashboard with opportunities, an application tracker, profile vault, inbox match review, and local settings.

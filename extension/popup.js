@@ -39,6 +39,7 @@ fillButton.addEventListener("click", async () => {
   try {
     show("Scanning the current page...");
     const scan = await messageActiveTab({ type: "APPLYPILOT_SCAN" });
+    if (scan.error) throw new Error(scan.error);
     let response;
     try {
       response = await fetch(`${backend}/api/browser-extension/fill-plan`, {

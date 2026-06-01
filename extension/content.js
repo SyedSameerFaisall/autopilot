@@ -36,12 +36,28 @@ function getFieldType(element) {
   return element.type || tag;
 }
 
+function isGoogleFormsPage() {
+  return window.location.hostname === "docs.google.com" && window.location.pathname.includes("/forms/");
+}
+
+function isGoogleFormsEditor() {
+  return isGoogleFormsPage() && /\/edit\/?$/.test(window.location.pathname);
+}
+
 function isRelevant(element) {
-  return !element.disabled && !["hidden", "submit", "button", "reset"].includes(getFieldType(element));
+  return (
+    !element.disabled &&
+    element.getClientRects().length > 0 &&
+    !["hidden", "submit", "button", "reset"].includes(getFieldType(element))
+  );
 }
 
 function collectFields() {
-  return Array.from(document.querySelectorAll("input, textarea, select")).filter(isRelevant).map((element, index) => {
+  return Array.from(document.querySelectorAll("input, textarea, select")).filter((element) => {
+    if (!isRelevant(element)) return false;
+    if (isGoogleFormsPage()) return Boolean(element.closest('[role="listitem"], .Qr7Oae'));
+    return true;
+  }).map((element, index) => {
     const locatorId = `applypilot-${index}`;
     element.setAttribute(APPLY_PILOT_ATTRIBUTE, locatorId);
     return {
@@ -84,6 +100,12 @@ function fillPlan(fields) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type === "APPLYPILOT_SCAN") sendResponse({ fields: collectFields(), source_url: window.location.href });
+  if (message.type === "APPLYPILOT_SCAN") {
+    if (isGoogleFormsEditor()) {
+      sendResponse({ error: "This is the Google Forms editor. Open Preview, then run ApplyPilot on the respondent form." });
+      return;
+    }
+    sendResponse({ fields: collectFields(), source_url: window.location.href });
+  }
   if (message.type === "APPLYPILOT_FILL") sendResponse(fillPlan(message.fields));
 });

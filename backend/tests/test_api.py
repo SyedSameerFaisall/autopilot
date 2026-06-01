@@ -314,3 +314,11 @@ def test_google_forms_style_fixture_includes_question_containers_and_hidden_cont
         assert response.text.count('role="listitem"') == 3
         assert 'type="hidden"' in response.text
         assert 'type="submit"' in response.text
+
+
+def test_google_forms_editor_fixture_includes_editor_controls() -> None:
+    with TestClient(app) as client:
+        response = client.get("/forms/d/demo/edit")
+        assert response.status_code == 200
+        assert 'aria-label="Question title"' in response.text
+        assert "Add question" in response.text
